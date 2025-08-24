@@ -1,0 +1,10 @@
+# Marker file for PEP 561 - Distributing and Packaging Type Information
+#
+# This empty file indicates that the dronecmd package supports type hints
+# and includes inline type annotations throughout the codebase.
+#
+# PEP 561 specifies that packages wishing to support type checkers should
+# include a py.typed file in their package directory.
+#
+# For more information see:
+# https://www.python.org/dev/peps/pep-0561/

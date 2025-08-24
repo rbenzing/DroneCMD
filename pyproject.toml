@@ -1,0 +1,341 @@
+[build-system]
+requires = [
+    "setuptools>=65.0.0",
+    "setuptools-scm>=7.1.0",
+    "wheel>=0.41.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dronecmd"
+authors = [
+    {name = "DroneCmd Team", email = "contact@dronecmd.org"},
+]
+description = "Enhanced SDR-based drone command analysis and interference toolkit"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research", 
+    "Intended Audience :: Telecommunications Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Ham Radio",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = [
+    "sdr", "radio", "drone", "uav", "signal-processing", "rf",
+    "mavlink", "dji", "fhss", "demodulation", "protocol-analysis"
+]
+dependencies = [
+    # Core scientific computing
+    "numpy>=1.24.0,<2.0.0",
+    "scipy>=1.10.0,<2.0.0",
+    
+    # Machine learning
+    "scikit-learn>=1.3.0,<2.0.0",
+    "joblib>=1.3.0,<2.0.0",
+    
+    # SDR hardware support
+    "pyrtlsdr>=0.2.9,<1.0.0",
+    
+    # Async support
+    "aiofiles>=23.0.0,<24.0.0",
+    
+    # CLI and configuration
+    "click>=8.1.0,<9.0.0",
+    "pyyaml>=6.0.0,<7.0.0",
+    "rich>=13.7.0,<14.0.0",
+    
+    # Data processing
+    "bitstring>=4.0.0,<5.0.0",
+    
+    # Compatibility
+    "typing-extensions>=4.7.0; python_version<'3.10'",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/your-org/dronecmd"
+Documentation = "https://dronecmd.readthedocs.io"
+Repository = "https://github.com/your-org/dronecmd"
+"Bug Tracker" = "https://github.com/your-org/dronecmd/issues"
+Changelog = "https://github.com/your-org/dronecmd/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Minimal installation (same as base dependencies)
+minimal = []
+
+# Extended SDR hardware support
+sdr = [
+    "pyhackrf>=0.5.1,<1.0.0",
+    # "SoapySDR>=0.8.0,<1.0.0",  # Uncomment if available
+]
+
+# Cryptography and security features
+crypto = [
+    "cryptography>=41.0.0,<42.0.0",
+    "reedsolo>=1.7.0,<2.0.0",
+]
+
+# Visualization and analysis
+viz = [
+    "matplotlib>=3.7.0,<4.0.0",
+    "seaborn>=0.12.0,<1.0.0",
+    "plotly>=5.15.0,<6.0.0",
+    "pandas>=2.0.0,<3.0.0",
+]
+
+# GUI components
+gui = [
+    "PyQt5>=5.15.0,<6.0.0",
+    "pyqtgraph>=0.13.0,<1.0.0",
+]
+
+# Jupyter notebook support
+jupyter = [
+    "jupyter>=1.0.0,<2.0.0",
+    "jupyterlab>=4.0.0,<5.0.0",
+    "ipython>=8.14.0,<9.0.0",
+    "ipywidgets>=8.0.0,<9.0.0",
+]
+
+# Performance profiling
+profiling = [
+    "memory-profiler>=0.61.0,<1.0.0",
+    "line-profiler>=4.1.0,<5.0.0",
+    "py-spy>=0.3.14,<1.0.0",
+]
+
+# All optional features
+all = [
+    "dronecmd[sdr,crypto,viz,gui,jupyter,profiling]",
+]
+
+# Development dependencies
+dev = [
+    # Testing
+    "pytest>=7.4.0,<8.0.0",
+    "pytest-asyncio>=0.21.0,<1.0.0",
+    "pytest-cov>=4.1.0,<5.0.0",
+    "pytest-mock>=3.11.0,<4.0.0",
+    "pytest-xdist>=3.3.0,<4.0.0",
+    
+    # Code quality
+    "black>=23.7.0,<24.0.0",
+    "flake8>=6.0.0,<7.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "mypy>=1.5.0,<2.0.0",
+    "pre-commit>=3.3.0,<4.0.0",
+    
+    # Documentation
+    "sphinx>=7.1.0,<8.0.0",
+    "sphinx-rtd-theme>=1.3.0,<2.0.0",
+    "sphinx-autodoc-typehints>=1.24.0,<2.0.0",
+    
+    # Build tools
+    "build>=0.10.0,<1.0.0",
+    "twine>=4.0.0,<5.0.0",
+    "bump2version>=1.0.1,<2.0.0",
+    
+    # Additional dev tools
+    "ipdb>=0.13.13,<1.0.0",
+    "tqdm>=4.65.0,<5.0.0",
+]
+
+[project.scripts]
+dronecmd = "dronecmd.cli:main"
+dronecmd-capture = "dronecmd.capture.manager:main"
+dronecmd-analyze = "dronecmd.tools.analyzer:main"
+
+[project.entry-points."dronecmd.plugins"]
+dji = "dronecmd.plugins.protocols.dji:DJIPlugin"
+mavlink = "dronecmd.plugins.protocols.mavlink:MAVLinkPlugin"
+generic = "dronecmd.plugins.protocols.generic:GenericPlugin"
+
+# ===================================
+# SETUPTOOLS CONFIGURATION
+# ===================================
+
+[tool.setuptools]
+packages = ["dronecmd"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+dronecmd = "dronecmd"
+
+[tool.setuptools.package-data]
+dronecmd = [
+    "py.typed",
+    "data/*.json",
+    "data/*.pkl",
+    "config/*.yaml",
+    "config/*.yml",
+]
+
+[tool.setuptools_scm]
+write_to = "dronecmd/_version.py"
+version_scheme = "release-branch-semver"
+
+# ===================================
+# TOOL CONFIGURATIONS
+# ===================================
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+known_first_party = ["dronecmd"]
+known_third_party = [
+    "numpy", "scipy", "sklearn", "joblib", "click", "rich",
+    "pyrtlsdr", "pyhackrf", "bitstring", "yaml", "aiofiles"
+]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+# Per-module options
+[[tool.mypy.overrides]]
+module = [
+    "rtlsdr.*",
+    "pyhackrf.*", 
+    "SoapySDR.*",
+    "scipy.*",
+    "sklearn.*",
+    "joblib.*",
+    "bitstring.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=dronecmd",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "hardware: marks tests that require SDR hardware",
+    "async: marks tests as async",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["dronecmd"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/env/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = [
+    "E203",  # whitespace before ':'
+    "E501",  # line too long (handled by black)
+    "W503",  # line break before binary operator
+]
+per-file-ignores = [
+    "__init__.py:F401",  # unused imports in __init__.py
+    "tests/*:S101",      # use of assert in tests
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "docs", "build", "dist"]
+skips = ["B101", "B601"]  # Skip assert_used and shell usage in tests
+
+# ===================================
+# DEVELOPMENT WORKFLOW
+# ===================================
+
+[tool.bump2version]
+current_version = "1.0.0"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+search = "{current_version}"
+replace = "{new_version}"
+
+[[tool.bump2version.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bump2version.files]]
+filename = "dronecmd/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'

@@ -1,0 +1,153 @@
+# Optional SDR Hardware Support for DroneCmd Enhanced Library
+# Install specific SDR drivers as needed
+
+# ===================================
+# RTL-SDR SUPPORT (Included in base)
+# ===================================
+# RTL-SDR is included in the base requirements as it's the most common
+# pyrtlsdr>=0.2.9,<1.0.0  # Already in base requirements
+
+# ===================================
+# HACKRF SUPPORT
+# ===================================
+# Great Scot Gadgets HackRF One
+pyhackrf>=0.5.1,<1.0.0
+
+# ===================================
+# AIRSPY SUPPORT  
+# ===================================
+# Airspy R2, Mini, HF+ Discovery, HF+ Dual Port
+# Note: Requires libairspy installed on system
+# airspy>=1.0.0,<2.0.0  # Uncomment if available on PyPI
+
+# ===================================
+# SDRPLAY SUPPORT
+# ===================================
+# SDRplay RSP1, RSP1A, RSP2, RSPdx, RSPduo
+# Note: Requires SDRplay API installed
+# sdrplay>=1.0.0,<2.0.0  # Uncomment if available
+
+# ===================================
+# ADALM-PLUTO SUPPORT
+# ===================================
+# Analog Devices ADALM-PLUTO
+# pyadi-iio>=0.0.14,<1.0.0  # Uncomment if needed
+
+# ===================================
+# USRP SUPPORT
+# ===================================
+# Ettus Research USRP devices
+# uhd>=4.4.0,<5.0.0  # Uncomment if needed - requires UHD drivers
+
+# ===================================
+# LIMESDR SUPPORT
+# ===================================
+# Lime Microsystems LimeSDR
+# pyLMS7002M>=1.0.0,<2.0.0  # Uncomment if available
+
+# ===================================
+# SOAPYSDR UNIVERSAL SUPPORT
+# ===================================
+# Universal SDR interface supporting multiple hardware platforms
+# SoapySDR>=0.8.0,<1.0.0  # Uncomment for universal SDR support
+
+# Specific SoapySDR modules (uncomment as needed):
+# SoapySDR-Remote>=0.5.0,<1.0.0      # Remote SDR support
+# SoapyRTLSDR>=0.3.0,<1.0.0          # RTL-SDR via SoapySDR
+# SoapyHackRF>=0.3.0,<1.0.0          # HackRF via SoapySDR
+# SoapyAirspy>=0.2.0,<1.0.0          # Airspy via SoapySDR
+# SoapyBladeRF>=0.4.0,<1.0.0         # BladeRF via SoapySDR
+# SoapyUHD>=0.4.0,<1.0.0             # USRP via SoapySDR
+
+# ===================================
+# BLADERF SUPPORT
+# ===================================
+# Nuand BladeRF
+# bladerf>=1.0.0,<2.0.0  # Uncomment if available
+
+# ===================================
+# FUNCUBE DONGLE SUPPORT
+# ===================================
+# FunCube Dongle Pro/Pro+
+# funcube>=1.0.0,<2.0.0  # Uncomment if available
+
+# ===================================
+# PERSEUS SUPPORT
+# ===================================
+# Microtelecom Perseus
+# perseus>=1.0.0,<2.0.0  # Uncomment if available
+
+# ===================================
+# INSTALLATION INSTRUCTIONS
+# ===================================
+# 
+# To install support for specific SDR hardware:
+# 
+# 1. RTL-SDR (included by default):
+#    pip install -r requirements-minimal.txt
+# 
+# 2. HackRF only:
+#    pip install -r requirements-minimal.txt pyhackrf
+# 
+# 3. Multiple SDR platforms via SoapySDR:
+#    pip install -r requirements-minimal.txt SoapySDR
+# 
+# 4. All supported SDR platforms:
+#    pip install -r requirements.txt
+# 
+# 5. Development with all SDR support:
+#    pip install -r requirements-dev.txt
+# 
+# ===================================
+# SYSTEM DEPENDENCIES
+# ===================================
+# 
+# Some SDR drivers require system-level libraries:
+# 
+# Ubuntu/Debian:
+#   sudo apt update
+#   sudo apt install librtlsdr-dev libhackrf-dev libairspy-dev
+#   sudo apt install libuhd-dev uhd-host  # For USRP
+#   sudo apt install libiio-dev libad9361-dev  # For PlutoSDR
+# 
+# macOS (via Homebrew):
+#   brew install librtlsdr hackrf airspy
+#   brew install uhd  # For USRP
+# 
+# Windows:
+#   Install Zadig for USB driver management
+#   Download vendor-specific drivers and APIs
+# 
+# ===================================
+# PERMISSION SETUP
+# ===================================
+# 
+# Linux users may need udev rules for USB access:
+# 
+# RTL-SDR:
+#   sudo wget -O /etc/udev/rules.d/20-rtlsdr.rules https://raw.githubusercontent.com/osmocom/rtl-sdr/master/rtl-sdr.rules
+# 
+# HackRF:
+#   sudo wget -O /etc/udev/rules.d/53-hackrf.rules https://raw.githubusercontent.com/greatscottgadgets/hackrf/master/host/libhackrf/53-hackrf.rules
+# 
+# Then reload udev:
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+# 
+# ===================================
+# TESTING SDR INSTALLATION
+# ===================================
+# 
+# After installation, test your SDR:
+# 
+# RTL-SDR:
+#   rtl_test
+#   python -c "from rtlsdr import RtlSdr; print('RTL-SDR OK')"
+# 
+# HackRF:
+#   hackrf_info
+#   python -c "import pyhackrf; print('HackRF OK')"
+# 
+# SoapySDR:
+#   SoapySDRUtil --find
+#   python -c "import SoapySDR; print('SoapySDR OK')"

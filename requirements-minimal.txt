@@ -1,0 +1,80 @@
+# Minimal Requirements for DroneCmd Enhanced Library
+# Core functionality only - no optional features or development tools
+
+# ===================================
+# ESSENTIAL CORE DEPENDENCIES
+# ===================================
+
+# Scientific Computing (Required for all signal processing)
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0,<2.0.0
+
+# Machine Learning (Required for protocol classification)
+scikit-learn>=1.3.0,<2.0.0
+joblib>=1.3.0,<2.0.0
+
+# ===================================
+# BASIC SDR SUPPORT
+# ===================================
+
+# RTL-SDR (Most common and affordable SDR)
+pyrtlsdr>=0.2.9,<1.0.0
+
+# ===================================
+# ESSENTIAL UTILITIES
+# ===================================
+
+# CLI support
+click>=8.1.0,<9.0.0
+
+# Configuration handling
+pyyaml>=6.0.0,<7.0.0
+
+# ===================================
+# MINIMAL DATA PROCESSING
+# ===================================
+
+# Bit manipulation (Required for packet processing)
+bitstring>=4.0.0,<5.0.0
+
+# ===================================
+# ASYNC SUPPORT (Required for enhanced capture)
+# ===================================
+
+# Async file operations
+aiofiles>=23.0.0,<24.0.0
+
+# ===================================
+# COMPATIBILITY
+# ===================================
+
+# Type hints for older Python versions
+typing-extensions>=4.7.0; python_version<"3.10"
+
+# Dataclasses for Python < 3.7
+dataclasses>=0.8; python_version<"3.7"
+
+# ===================================
+# MINIMAL BUILD REQUIREMENTS
+# ===================================
+
+# Essential packaging
+setuptools>=65.0.0
+wheel>=0.41.0,<1.0.0
+
+# Note: This minimal installation provides:
+# - Basic SDR capture (RTL-SDR only)
+# - Signal processing and demodulation
+# - Protocol classification
+# - FHSS functionality
+# - Packet parsing
+# - CLI interface
+# 
+# Not included in minimal install:
+# - Advanced SDR platforms (HackRF, Airspy, etc.)
+# - GUI components
+# - Visualization tools
+# - Development and testing tools
+# - Documentation tools
+# - Optional cryptography features
+# - Performance profiling tools

@@ -1,0 +1,189 @@
+# DroneCmd Enhanced Library Requirements
+# Production-ready SDR analysis and drone communication toolkit
+
+# ===================================
+# CORE DEPENDENCIES (Required)
+# ===================================
+
+# Scientific Computing and Signal Processing
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0,<2.0.0
+
+# Machine Learning and Classification
+scikit-learn>=1.3.0,<2.0.0
+joblib>=1.3.0,<2.0.0
+
+# ===================================
+# SDR HARDWARE SUPPORT
+# ===================================
+
+# RTL-SDR Support (Primary)
+pyrtlsdr>=0.2.9,<1.0.0
+
+# HackRF Support
+pyhackrf>=0.5.1,<1.0.0
+
+# SoapySDR Support (Optional - for advanced SDR platforms)
+# SoapySDR>=0.8.0,<1.0.0  # Uncomment if needed
+
+# ===================================
+# ASYNC AND CONCURRENT PROCESSING
+# ===================================
+
+# Async utilities (Python 3.7+ has asyncio built-in)
+aiofiles>=23.0.0,<24.0.0  # For async file operations
+
+# ===================================
+# COMMAND LINE AND USER INTERFACE
+# ===================================
+
+# CLI Framework
+click>=8.1.0,<9.0.0
+
+# Rich console output
+rich>=13.7.0,<14.0.0
+
+# Progress bars and status
+tqdm>=4.65.0,<5.0.0
+
+# ===================================
+# DATA FORMATS AND SERIALIZATION
+# ===================================
+
+# Bit manipulation
+bitstring>=4.0.0,<5.0.0
+
+# JSON/YAML configuration
+pyyaml>=6.0.0,<7.0.0
+
+# ===================================
+# CRYPTOGRAPHY AND SECURITY
+# ===================================
+
+# Modern cryptography
+cryptography>=41.0.0,<42.0.0
+
+# Error correction codes
+reedsolo>=1.7.0,<2.0.0
+
+# ===================================
+# OPTIONAL VISUALIZATION
+# ===================================
+
+# Plotting (optional - for visualization)
+matplotlib>=3.7.0,<4.0.0
+
+# Interactive widgets (optional)
+ipywidgets>=8.0.0,<9.0.0
+
+# ===================================
+# DEVELOPMENT AND TESTING
+# ===================================
+
+# Testing framework
+pytest>=7.4.0,<8.0.0
+pytest-asyncio>=0.21.0,<1.0.0
+pytest-cov>=4.1.0,<5.0.0
+pytest-mock>=3.11.0,<4.0.0
+
+# Code quality and formatting
+black>=23.7.0,<24.0.0
+flake8>=6.0.0,<7.0.0
+isort>=5.12.0,<6.0.0
+
+# Type checking
+mypy>=1.5.0,<2.0.0
+types-pyyaml>=6.0.0
+types-setuptools>=68.0.0
+
+# ===================================
+# DOCUMENTATION
+# ===================================
+
+# Documentation generation
+sphinx>=7.1.0,<8.0.0
+sphinx-rtd-theme>=1.3.0,<2.0.0
+sphinx-autodoc-typehints>=1.24.0,<2.0.0
+
+# ===================================
+# PACKAGING AND DISTRIBUTION
+# ===================================
+
+# Build tools
+build>=0.10.0,<1.0.0
+wheel>=0.41.0,<1.0.0
+twine>=4.0.0,<5.0.0
+
+# Version management
+setuptools-scm>=7.1.0,<8.0.0
+
+# ===================================
+# PERFORMANCE AND MONITORING
+# ===================================
+
+# Memory profiling (optional)
+memory-profiler>=0.61.0,<1.0.0
+
+# Performance timing
+line-profiler>=4.1.0,<5.0.0
+
+# ===================================
+# COMPATIBILITY AND UTILITIES
+# ===================================
+
+# Python version compatibility
+typing-extensions>=4.7.0; python_version<"3.10"
+
+# Improved dataclasses for older Python
+dataclasses>=0.8; python_version<"3.7"
+
+# Enhanced pathlib
+pathlib2>=2.3.7; python_version<"3.6"
+
+# ===================================
+# OPTIONAL GUI COMPONENTS
+# ===================================
+
+# Qt GUI framework (optional)
+# PyQt5>=5.15.0,<6.0.0  # Uncomment if GUI needed
+# PyQt6>=6.5.0,<7.0.0   # Alternative to PyQt5
+
+# Tkinter enhancements (optional)
+# tkinter-tooltip>=2.1.0  # Uncomment if Tkinter GUI needed
+
+# ===================================
+# JUPYTER NOTEBOOK SUPPORT (Optional)
+# ===================================
+
+# Jupyter support for interactive development
+# jupyter>=1.0.0,<2.0.0          # Uncomment if using notebooks
+# jupyterlab>=4.0.0,<5.0.0       # Uncomment if using JupyterLab
+# ipython>=8.14.0,<9.0.0         # Enhanced Python shell
+
+# ===================================
+# PLATFORM-SPECIFIC DEPENDENCIES
+# ===================================
+
+# Windows-specific
+# pywin32>=306; sys_platform=="win32"        # Windows API access
+# wmi>=1.5.1; sys_platform=="win32"          # Windows Management
+
+# Linux-specific
+# python-udev>=0.24.0; sys_platform=="linux"  # USB device detection
+
+# macOS-specific
+# pyobjc>=9.2; sys_platform=="darwin"        # macOS system integration
+
+# ===================================
+# CONSTRAINT SPECIFICATIONS
+# ===================================
+
+# Ensure compatible versions
+setuptools>=65.0.0
+pip>=23.0.0
+
+# Pin specific versions for stability in production
+# Uncomment and adjust for production deployments:
+# numpy==1.26.4
+# scipy==1.13.0
+# scikit-learn==1.5.0
