@@ -12,19 +12,6 @@ This module is intended for authorized testing, research, and educational
 purposes only. Users are responsible for compliance with all applicable
 laws and regulations including FCC Part 15, local spectrum regulations,
 and drone operation guidelines. Unauthorized transmission is illegal.
-
-Key Features:
-- Signal injection with compliance monitoring
-- Packet obfuscation and encoding techniques
-- Integration with FHSS and replay systems
-- Comprehensive safety mechanisms
-- Laboratory testing protocols
-
-Usage (Authorized Testing Only):
-    >>> from dronecmd.injection import SignalInjector, ObfuscationEngine
-    >>> # Only use in authorized laboratory environment
-    >>> injector = SignalInjector(enable_compliance_checks=True)
-    >>> result = injector.inject_packet(packet_data, frequency=2.44e9)
 """
 
 import logging

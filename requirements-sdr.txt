@@ -5,13 +5,13 @@
 # RTL-SDR SUPPORT (Included in base)
 # ===================================
 # RTL-SDR is included in the base requirements as it's the most common
-# pyrtlsdr>=0.2.9,<1.0.0  # Already in base requirements
+# pyrtlsdr>=0.3.0,<1.0.0  # Already in base requirements
 
 # ===================================
 # HACKRF SUPPORT
 # ===================================
 # Great Scot Gadgets HackRF One
-pyhackrf>=0.5.1,<1.0.0
+pyhackrf>=0.2.0,<1.0.0
 
 # ===================================
 # AIRSPY SUPPORT  

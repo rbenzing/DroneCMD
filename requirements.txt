@@ -18,10 +18,10 @@ joblib>=1.3.0,<2.0.0
 # ===================================
 
 # RTL-SDR Support (Primary)
-pyrtlsdr>=0.2.9,<1.0.0
+pyrtlsdr>=0.3.0,<1.0.0
 
 # HackRF Support
-pyhackrf>=0.5.1,<1.0.0
+pyhackrf>=0.2.0,<1.0.0
 
 # SoapySDR Support (Optional - for advanced SDR platforms)
 # SoapySDR>=0.8.0,<1.0.0  # Uncomment if needed
