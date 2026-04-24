@@ -375,7 +375,33 @@ For more information, see the documentation.
                             help='Show compatibility information')
     info_parser.add_argument('--migration', action='store_true',
                             help='Show migration guide')
-    
+
+    # Train command
+    train_parser = subparsers.add_parser(
+        'train',
+        help='Train protocol classifiers from labeled IQ captures',
+    )
+    train_parser.add_argument(
+        '--data-dir', required=True,
+        help='Directory of labeled IQ captures (see docs/iq_capture_guide.md)',
+    )
+    train_parser.add_argument(
+        '--output-dir', required=True,
+        help='Directory to write trained model .pkl files',
+    )
+    train_parser.add_argument(
+        '--cv-folds', type=int, default=5,
+        help='Cross-validation folds (default: 5)',
+    )
+    train_parser.add_argument(
+        '--jobs', type=int, default=-1,
+        help='Parallel sklearn jobs (-1 = all CPUs)',
+    )
+    train_parser.add_argument(
+        '--seed', type=int, default=42,
+        help='Random seed for reproducibility',
+    )
+
     return parser
 
 
@@ -492,9 +518,7 @@ async def cmd_analyze(args: argparse.Namespace, config: ConfigManager, output: C
         if ENHANCED_MODULES_AVAILABLE:
             # Use enhanced capture manager for packet extraction
             manager = CaptureManager()
-            manager._iq_data = iq_data  # Set data directly
-            
-            packets = manager.extract_packets(threshold=args.threshold)
+            packets = manager.extract_packets(iq_data=iq_data, threshold=args.threshold)
             
             if args.max_packets:
                 packets = packets[:args.max_packets]
@@ -860,6 +884,41 @@ def cmd_info(args: argparse.Namespace, config: ConfigManager, output: CLIOutput)
         raise CLIError(f"Info command failed: {e}")
 
 
+def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+    """Handle train command — build classifiers from labeled IQ captures."""
+    try:
+        from .training.train import train
+    except ImportError as e:
+        output.error(f"Training module not available: {e}")
+        raise CLIError(f"Training module not available: {e}")
+
+    output.info(f"Training classifiers from {args.data_dir} ...")
+    try:
+        metadata = train(
+            data_dir=args.data_dir,
+            output_dir=args.output_dir,
+            cv_folds=args.cv_folds,
+            n_jobs=args.jobs,
+            random_state=args.seed,
+        )
+        output.result({
+            'models_saved_to': args.output_dir,
+            'n_samples': metadata['n_samples'],
+            'n_features': metadata['n_features'],
+            'classes': metadata['classes'],
+            'cv_scores': metadata['cv_scores'],
+        })
+    except (FileNotFoundError, ValueError) as e:
+        output.error(str(e))
+        raise CLIError(str(e))
+    except Exception as e:
+        output.error(f"Training failed: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        raise CLIError(f"Training failed: {e}")
+
+
 async def main() -> int:
     """Main CLI entry point."""
     parser = create_parser()
@@ -911,6 +970,8 @@ async def main() -> int:
             cmd_config(args, config, output)
         elif args.command == 'info':
             cmd_info(args, config, output)
+        elif args.command == 'train':
+            cmd_train(args, config, output)
         else:
             output.error(f"Unknown command: {args.command}")
             return 1

@@ -154,37 +154,31 @@ dev = [
 ]
 
 [project.scripts]
-dronecmd = "dronecmd.cli:main"
-dronecmd-capture = "dronecmd.capture.manager:main"
-dronecmd-analyze = "dronecmd.tools.analyzer:main"
+dronecmd = "cli:cli_main"
+dronecmd-train = "training.train:main"
 
 [project.entry-points."dronecmd.plugins"]
-dji = "dronecmd.plugins.protocols.dji:DJIPlugin"
-mavlink = "dronecmd.plugins.protocols.mavlink:MAVLinkPlugin"
-generic = "dronecmd.plugins.protocols.generic:GenericPlugin"
+dji = "plugins.protocols.dji:DJIPlugin"
+parrot = "plugins.protocols.parrot:ParrotPlugin"
+generic = "plugins.protocols.generic:GenericPlugin"
 
 # ===================================
 # SETUPTOOLS CONFIGURATION
 # ===================================
 
 [tool.setuptools]
-packages = ["dronecmd"]
 include-package-data = true
 
-[tool.setuptools.package-dir]
-dronecmd = "dronecmd"
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["capture*", "core*", "injector*", "plugins*", "training*", "utils*"]
+exclude = ["tests*", "docs*"]
 
 [tool.setuptools.package-data]
-dronecmd = [
-    "py.typed",
-    "data/*.json",
-    "data/*.pkl",
-    "config/*.yaml",
-    "config/*.yml",
-]
+"*" = ["py.typed", "data/*.json", "data/*.pkl", "config/*.yaml", "config/*.yml"]
 
 [tool.setuptools_scm]
-write_to = "dronecmd/_version.py"
+write_to = "_version.py"
 version_scheme = "release-branch-semver"
 
 # ===================================
@@ -258,10 +252,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=dronecmd",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
 ]
 testpaths = ["tests"]
 markers = [
