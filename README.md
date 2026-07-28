@@ -1,12 +1,30 @@
 # DroneCMD
 
-**DroneCMD** is a production-grade Python framework for SDR-based drone communication analysis. It provides a full signal pipeline — capture → demodulate → classify → parse — with FCC-compliant signal injection, a from-scratch ML classifier training system, and a plugin architecture for extensibility.
+<div align="center">
 
-> **This software is for lawful security research and authorized testing only.**
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen?style=for-the-badge)]()
+[![SDR](https://img.shields.io/badge/SDR-HackRF%20%7C%20RTL--SDR-orange?style=for-the-badge)]()
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
+
+**A production-grade Python framework for SDR-based drone communication analysis**
+
+📡 **SDR Capture** • 🧠 **ML Classification** • 🛰️ **MAVLink / DJI Parsing** • ⚖️ **FCC-Compliant Injection**
+
+[Capabilities](#-key-capabilities) • [Installation](#-installation) • [Architecture](#-architecture) • [License](#-legal)
+
+</div>
 
 ---
 
-## Key Capabilities
+**DroneCMD** is a production-grade Python framework for SDR-based drone communication analysis. It provides a full signal pipeline — capture → demodulate → classify → parse — with FCC-compliant signal injection, a from-scratch ML classifier training system, and a plugin architecture for extensibility.
+
+> ⚠️ **This software is for lawful security research and authorized testing only.**
+
+---
+
+## 🛰️ Key Capabilities
 
 | Capability | Description |
 |---|---|
@@ -20,7 +38,7 @@
 
 ---
 
-## Requirements
+## 📋 Requirements
 
 - Python 3.8+
 - HackRF tools (`hackrf_info`) or RTL-SDR drivers for hardware capture
@@ -28,7 +46,7 @@
 
 ---
 
-## Installation
+## 📦 Installation
 
 ```bash
 git clone https://github.com/your-org/dronecmd.git
@@ -49,7 +67,7 @@ pip install -e ".[all]"        # Everything
 
 ---
 
-## CLI Usage
+## 🖥️ CLI Usage
 
 ```bash
 # Capture IQ samples from SDR hardware
@@ -74,7 +92,7 @@ dronecmd config set capture.default_sample_rate 2048000
 
 ---
 
-## Classifier Training
+## 🧠 Classifier Training
 
 The classifier is **not pre-trained** — it learns from your own labeled IQ captures. This is intentional: effective classification requires data collected from the specific hardware and environment you are analyzing.
 
@@ -92,11 +110,12 @@ dronecmd analyze --input new_capture.iq
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 DroneCMD exposes two API layers that are both maintained:
 
 **Simple layer** — factory functions and synchronous classes for quick scripting:
+
 ```python
 from capture.manager import CaptureManager
 manager = CaptureManager(frequency=2.44e9, sample_rate=2_048_000)
@@ -104,6 +123,7 @@ packets = manager.extract_packets(iq_data, threshold=0.1)
 ```
 
 **Enhanced layer** — async streaming, structured configs, typed results:
+
 ```python
 from core.capture import EnhancedLiveCapture, SDRConfig
 from core.classification import EnhancedProtocolClassifier, ClassifierConfig
@@ -126,7 +146,7 @@ async with EnhancedLiveCapture(config) as capture:
 
 ---
 
-## Plugin Development
+## 🔌 Plugin Development
 
 Use `plugins/protocols/_template.py` as the starting point. Implement `detect()`, `decode_packet()`, and declare capabilities via `PluginMetadata`. Register in `pyproject.toml`:
 
@@ -137,7 +157,7 @@ myplugin = "plugins.protocols.myplugin:MyPlugin"
 
 ---
 
-## Testing
+## 🧪 Testing
 
 ```bash
 pytest                                          # All tests
@@ -150,7 +170,7 @@ pytest -n auto                                  # Parallel execution
 
 ---
 
-## Compliance
+## ⚖️ Compliance
 
 Signal injection enforces hard limits — violations raise typed exceptions, not silent log warnings:
 
@@ -164,8 +184,29 @@ These are non-bypassable. `InjectionConfig.validate()` returns a list of errors 
 
 ---
 
-## Legal
+## ⚖️ Legal
 
 This software is for educational and authorized security research **only**. Use against hardware, drones, or networks you do not own or do not have explicit permission to test is prohibited.
 
 © 2025 Russell Benzing | MIT License
+
+---
+
+## 👤 About the Author
+
+Built by **Russell Benzing**. DroneCMD is a defensive/research SDR toolkit for lawful drone-communication analysis and authorized testing.
+
+---
+
+## 🆘 Support
+
+- **Issues**: [GitHub Issues](https://github.com/your-org/dronecmd/issues)
+- **Data collection guide**: [docs/iq_capture_guide.md](docs/iq_capture_guide.md)
+
+If DroneCMD is useful to you, you can support the work:
+
+<div align="center">
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
+
+</div>
