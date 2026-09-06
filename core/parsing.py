@@ -704,6 +704,20 @@ class GenericParser(ProtocolParserBase):
         return patterns[:5]  # Return up to 5 patterns
 
 
+@dataclass
+class ParserConfig:
+    """Configuration for :class:`EnhancedPacketParser`.
+
+    Provides a structured alternative to passing individual keyword arguments.
+    """
+
+    enable_protocol_detection: bool = True
+    enable_error_correction: bool = False
+    enable_quality_assessment: bool = True
+    enable_demodulation_integration: bool = True
+    confidence_threshold: float = 0.5
+
+
 class EnhancedPacketParser:
     """
     Enhanced packet parser with multi-protocol support and advanced features.
@@ -714,6 +728,7 @@ class EnhancedPacketParser:
 
     def __init__(
         self,
+        config: Optional[ParserConfig] = None,
         enable_classification: bool = True,
         enable_demodulation_integration: bool = True,
         confidence_threshold: float = 0.5,
@@ -722,10 +737,18 @@ class EnhancedPacketParser:
         Initialize enhanced packet parser.
 
         Args:
+            config: Optional ParserConfig; when provided, its fields take
+                precedence over the individual keyword arguments below.
             enable_classification: Use enhanced protocol classification
             enable_demodulation_integration: Integrate with demodulation system
             confidence_threshold: Minimum confidence for valid parsing
         """
+        if config is not None:
+            enable_classification = config.enable_protocol_detection
+            enable_demodulation_integration = config.enable_demodulation_integration
+            confidence_threshold = config.confidence_threshold
+
+        self.config = config
         self.enable_classification = enable_classification
         self.enable_demodulation_integration = enable_demodulation_integration
         self.confidence_threshold = confidence_threshold

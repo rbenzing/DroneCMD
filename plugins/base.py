@@ -790,6 +790,20 @@ class ExampleProtocolPlugin(ProtocolPlugin):
         )
 
 
+# =============================================================================
+# PUBLIC ALIASES
+# =============================================================================
+#
+# Convenience names exposed via ``plugins/__init__.py``. Decoding is handled by
+# ProtocolPlugin.decode_packet(), encoding/command generation by
+# InjectionPlugin.encode_command(), and analysis by AnalysisPlugin.
+
+DecoderPlugin = ProtocolPlugin
+EncoderPlugin = InjectionPlugin
+AnalyzerPlugin = AnalysisPlugin
+PluginVersion = str  # semantic version string type alias
+
+
 if __name__ == "__main__":
     # Test example plugin
     plugin = ExampleProtocolPlugin()

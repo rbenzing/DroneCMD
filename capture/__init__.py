@@ -57,10 +57,11 @@ except ImportError as e:
 # =============================================================================
 
 try:
-    from .sniffer import PacketSniffer, SnifferError
+    # PacketSnifferError is the canonical name; expose it as SnifferError too.
+    from .sniffer import PacketSniffer, PacketSnifferError as SnifferError
     SNIFFER_AVAILABLE = True
     logger.debug("Packet sniffer loaded successfully")
-    
+
 except ImportError as e:
     logger.warning(f"Packet sniffer not available: {e}")
     SNIFFER_AVAILABLE = False
@@ -72,15 +73,14 @@ except ImportError as e:
 # =============================================================================
 
 try:
-    from .detector import SignalDetector, DetectorConfig
+    from .detector import SignalDetector
     DETECTOR_AVAILABLE = True
     logger.debug("Signal detector loaded successfully")
-    
+
 except ImportError as e:
     logger.warning(f"Signal detector not available: {e}")
     DETECTOR_AVAILABLE = False
     SignalDetector = None
-    DetectorConfig = None
 
 # =============================================================================
 # SIMPLE PROTOCOL CLASSIFIER
@@ -487,10 +487,7 @@ __all__ = [
     'PacketSniffer', 
     'SignalDetector',
     'SimpleProtocolClassifier',
-    
-    # Configuration classes
-    'DetectorConfig',
-    
+
     # Error classes
     'CaptureManagerError',
     'SnifferError',

@@ -999,6 +999,16 @@ def create_obfuscation_engine(
     return ObfuscationEngine(config)
 
 
+# =============================================================================
+# PUBLIC ALIASES
+# =============================================================================
+#
+# Names exposed via injector/__init__.py.
+
+ObfuscationMethod = ObfuscationType
+PacketObfuscator = ProtocolObfuscator
+
+
 # Example usage
 if __name__ == "__main__":
     # Configure logging

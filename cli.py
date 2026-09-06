@@ -46,16 +46,16 @@ from typing import Any, Dict, List, Optional, Union
 
 # Core imports
 try:
-    from .core.capture import EnhancedLiveCapture, SDRConfig, SDRPlatform, GainMode
-    from .core.signal_processing import SignalProcessor, analyze_signal_quality
-    from .core.fhss import EnhancedFHSSEngine, FHSSBand, create_fcc_compliant_fhss
-    from .core.classification import EnhancedProtocolClassifier, ClassifierConfig
-    from .core.replay import EnhancedReplayEngine, ReplayConfig, ReplayStrategy
-    from .capture.manager import CaptureManager
-    from .utils.logging import configure_logging, get_logger, log_performance
-    from .utils.fileio import read_iq_file, write_iq_file, FileFormat, CompressionType, get_file_info
-    from .utils.crypto import CryptoManager, generate_secure_token
-    from .utils.compat import check_compatibility, get_migration_guide
+    from core.capture import EnhancedLiveCapture, SDRConfig, SDRPlatform, GainMode
+    from core.signal_processing import SignalProcessor, analyze_signal_quality
+    from core.fhss import EnhancedFHSSEngine, FHSSBand, create_fcc_compliant_fhss
+    from core.classification import EnhancedProtocolClassifier, ClassifierConfig
+    from core.replay import EnhancedReplayEngine, ReplayConfig, ReplayStrategy
+    from capture.manager import CaptureManager
+    from utils.logging import configure_logging, get_logger, log_performance
+    from utils.fileio import read_iq_file, write_iq_file, FileFormat, CompressionType, get_file_info
+    from utils.crypto import CryptoManager, generate_secure_token
+    from utils.compat import check_compatibility, get_migration_guide
     ENHANCED_MODULES_AVAILABLE = True
 except ImportError:
     # Fallback imports for compatibility
@@ -683,7 +683,7 @@ async def cmd_generate_fhss(args: argparse.Namespace, config: ConfigManager, out
             )
         elif ENHANCED_MODULES_AVAILABLE:
             # Use enhanced FHSS
-            from .core.fhss import EnhancedFHSSEngine, FHSSConfig
+            from core.fhss import EnhancedFHSSEngine, FHSSConfig
             
             config = FHSSConfig(
                 center_freq_hz=args.frequency,
@@ -868,12 +868,12 @@ def cmd_info(args: argparse.Namespace, config: ConfigManager, output: CLIOutput)
         }
         
         if args.compatibility and ENHANCED_MODULES_AVAILABLE:
-            from .utils.compat import check_compatibility
+            from utils.compat import check_compatibility
             compat_info = check_compatibility()
             info_data['compatibility'] = compat_info
         
         if args.migration and ENHANCED_MODULES_AVAILABLE:
-            from .utils.compat import get_migration_guide
+            from utils.compat import get_migration_guide
             migration_guide = get_migration_guide()
             info_data['migration_guide'] = migration_guide
         
@@ -887,7 +887,7 @@ def cmd_info(args: argparse.Namespace, config: ConfigManager, output: CLIOutput)
 def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
     """Handle train command — build classifiers from labeled IQ captures."""
     try:
-        from .training.train import train
+        from training.train import train
     except ImportError as e:
         output.error(f"Training module not available: {e}")
         raise CLIError(f"Training module not available: {e}")

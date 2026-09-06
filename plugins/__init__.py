@@ -32,7 +32,9 @@ Usage:
 
 import logging
 import importlib
+import importlib.util
 import pkgutil
+import sys
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Type, Union, Callable
@@ -268,16 +270,24 @@ def discover_plugins(search_paths: Optional[List[Path]] = None) -> List[Type[Bas
                 
                 module_name = py_file.stem
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
-                
+
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
+                    # Register in sys.modules before executing: dataclass
+                    # processing looks the module up by name, which fails with
+                    # AttributeError if it isn't registered first.
+                    sys.modules[module_name] = module
                     spec.loader.exec_module(module)
                     
-                    # Find plugin classes
+                    # Find plugin classes defined in this module (skip imported
+                    # classes and abstract base classes).
                     for name, obj in inspect.getmembers(module, inspect.isclass):
-                        if (issubclass(obj, BasePlugin) and 
+                        if (issubclass(obj, BasePlugin) and
+                            obj.__module__ == module.__name__ and
                             obj is not BasePlugin and
-                            obj is not ProtocolPlugin):
+                            obj is not ProtocolPlugin and
+                            not name.startswith("Base") and
+                            not inspect.isabstract(obj)):
                             discovered.append(obj)
                             logger.debug(f"Discovered plugin class: {name}")
         
@@ -313,13 +323,9 @@ def load_plugins(
                     loaded_plugins.append(plugin_instance)
                     
                     if auto_register:
-                        metadata = {
-                            'type': 'protocol',
-                            'family': plugin_name,
-                            'built_in': True
-                        }
-                        register_plugin(plugin_instance, metadata)
-                    
+                        # The registry derives metadata from the plugin instance.
+                        register_plugin(plugin_instance)
+
                     logger.info(f"Loaded built-in plugin: {plugin_name}")
                 else:
                     logger.warning(f"Failed to initialize plugin: {plugin_name}")
@@ -339,15 +345,10 @@ def load_plugins(
                     loaded_plugins.append(plugin_instance)
                     
                     if auto_register:
-                        metadata = {
-                            'type': 'protocol',
-                            'family': 'external',
-                            'built_in': False,
-                            'class': plugin_class.__name__
-                        }
-                        register_plugin(plugin_instance, metadata)
-                    
-                    logger.info(f"Loaded external plugin: {plugin_instance.name}")
+                        # The registry derives metadata from the plugin instance.
+                        register_plugin(plugin_instance)
+
+                    logger.info(f"Loaded external plugin: {plugin_instance.metadata.name}")
                 else:
                     logger.warning(f"Failed to initialize external plugin: {plugin_class.__name__}")
                     

@@ -317,11 +317,12 @@ class PluginRegistry:
             self._stats['discovery_runs'] += 1
             initial_count = len(self._plugins)
             
-            # Default sources if none provided
+            # Default sources if none provided. The project uses a flat layout,
+            # so the bundled protocol plugins live in the `plugins.protocols`
+            # package (not a `dronecmd` package).
             if sources is None:
                 sources = [
-                    'dronecmd.plugins',  # Package plugins
-                    'plugins',           # Local plugins directory
+                    'plugins.protocols',  # Bundled protocol plugins
                 ]
             
             # Discover from each source
@@ -713,9 +714,41 @@ class PluginRegistry:
                 continue
             
             plugins.append(plugin_info)
-        
+
         return sorted(plugins, key=lambda p: p.metadata.name)
-    
+
+    def unregister_plugin(self, plugin_name: str) -> bool:
+        """
+        Remove a registered plugin and drop it from all indices.
+
+        Args:
+            plugin_name: Name of the plugin to remove
+
+        Returns:
+            True if the plugin was found and removed, False otherwise
+        """
+        plugin_info = self._plugins.pop(plugin_name, None)
+        if plugin_info is None:
+            return False
+
+        metadata = plugin_info.metadata
+        self._discard_from(self._plugins_by_type.get(metadata.plugin_type, []), plugin_name)
+        for capability in metadata.capabilities:
+            self._discard_from(self._plugins_by_capability.get(capability, []), plugin_name)
+        for protocol in metadata.supported_protocols:
+            self._discard_from(self._plugins_by_protocol.get(protocol, []), plugin_name)
+
+        logger.info(f"Unregistered plugin: {plugin_name}")
+        return True
+
+    @staticmethod
+    def _discard_from(names: List[str], name: str) -> None:
+        """Remove ``name`` from a list if present (no error if absent)."""
+        try:
+            names.remove(name)
+        except ValueError:
+            pass
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get registry statistics."""
         stats = self._stats.copy()
@@ -811,6 +844,20 @@ def get_injection_plugins() -> List[InjectionPlugin]:
     """Get all injection plugins."""
     plugins = get_plugin_registry().get_plugins_by_type(PluginType.INJECTION)
     return [p for p in plugins if isinstance(p, InjectionPlugin)]
+
+
+def list_plugins() -> List[str]:
+    """Return the names of all plugins registered with the global registry."""
+    return [info.metadata.name for info in get_plugin_registry().list_plugins()]
+
+
+def unregister_plugin(plugin_name: str) -> bool:
+    """Unregister a plugin from the global registry by name."""
+    return get_plugin_registry().unregister_plugin(plugin_name)
+
+
+# Public alias for the registry's error type.
+RegistryError = PluginRegistryError
 
 
 def find_plugins_for_protocol(protocol: str) -> List[BasePlugin]:

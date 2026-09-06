@@ -36,7 +36,7 @@ warnings.warn(
 # =============================================================================
 
 try:
-    from .injector import (
+    from .suringe import (
         SignalInjector,
         InjectionConfig,
         InjectionResult,

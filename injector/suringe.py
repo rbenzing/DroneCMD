@@ -1098,6 +1098,23 @@ def create_mock_transmitter() -> MockTransmitter:
     return MockTransmitter()
 
 
+# =============================================================================
+# PUBLIC ALIASES
+# =============================================================================
+#
+# Names exposed via injector/__init__.py. The engine, method enum and safety
+# monitor are re-exported under the package's public API names.
+
+
+class InjectorError(Exception):
+    """Base error raised by injection operations."""
+
+
+SignalInjector = InjectionEngine
+InjectionMode = InjectionMethod
+ComplianceMonitor = SafetyMonitor
+
+
 # Example usage
 if __name__ == "__main__":
     # Configure logging

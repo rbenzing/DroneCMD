@@ -52,8 +52,7 @@ dependencies = [
     # Async support
     "aiofiles>=23.0.0,<24.0.0",
     
-    # CLI and configuration
-    "click>=8.1.0,<9.0.0",
+    # CLI and configuration (the CLI is built on the stdlib argparse module)
     "pyyaml>=6.0.0,<7.0.0",
     "rich>=13.7.0,<14.0.0",
     
@@ -211,9 +210,9 @@ include_trailing_comma = true
 force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
-known_first_party = ["dronecmd"]
+known_first_party = ["core", "capture", "plugins", "injector", "training", "utils"]
 known_third_party = [
-    "numpy", "scipy", "sklearn", "joblib", "click", "rich",
+    "numpy", "scipy", "sklearn", "joblib", "rich",
     "pyrtlsdr", "pyhackrf", "bitstring", "yaml", "aiofiles"
 ]
 
