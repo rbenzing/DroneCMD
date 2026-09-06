@@ -72,7 +72,9 @@ and it gives the most training variety.
 
 ```bash
 # DJI OcuSync 2.4 GHz — 30 second capture
+# (2.44 GHz / 20 MHz requires HackRF; the default platform is rtl_sdr)
 dronecmd capture \
+  --platform hackrf \
   --frequency 2.44e9 \
   --sample-rate 20e6 \
   --duration 30 \
@@ -81,12 +83,13 @@ dronecmd capture \
 
 # Parrot at 2.4 GHz
 dronecmd capture \
+  --platform hackrf \
   --frequency 2.44e9 \
   --sample-rate 5e6 \
   --duration 30 \
   --output captures/parrot_arsdk_01.iq
 
-# MAVLink telemetry at 433 MHz
+# MAVLink telemetry at 433 MHz (within RTL-SDR range, so no --platform needed)
 dronecmd capture \
   --frequency 433.5e6 \
   --sample-rate 2e6 \
@@ -106,6 +109,7 @@ This is required to train the "unknown/noise" class and prevent false positives:
 
 ```bash
 dronecmd capture \
+  --platform hackrf \
   --frequency 2.44e9 \
   --sample-rate 20e6 \
   --duration 30 \
@@ -133,7 +137,7 @@ outdoor, and flight state (idle, hover, active flight).
 Each capture file needs a corresponding label file.  Create a JSON sidecar:
 
 ```bash
-# Automatically written if using dronecmd capture (--include-metadata is default)
+# A metadata sidecar is written automatically by `dronecmd capture`.
 # Manual example:
 cat > captures/dji_ocusync_2g4_flight01.json << 'EOF'
 {
@@ -182,7 +186,7 @@ You can also view the spectrum with:
 python -c "
 import numpy as np
 import matplotlib.pyplot as plt
-from dronecmd.utils.fileio import read_iq_file
+from utils.fileio import read_iq_file
 
 iq = read_iq_file('captures/dji_ocusync_2g4_flight01.iq')
 freqs = np.fft.fftshift(np.fft.fftfreq(len(iq), 1/20e6))

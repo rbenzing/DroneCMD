@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen?style=for-the-badge)]()
+[![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen?style=for-the-badge)]()
 [![SDR](https://img.shields.io/badge/SDR-HackRF%20%7C%20RTL--SDR-orange?style=for-the-badge)]()
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
 
@@ -34,7 +34,7 @@
 | FHSS Engine | Frequency hopping with FCC CFR 47 §15.247 compliance enforcement |
 | Signal Injection | Power-limited, dwell-time-enforced injection with typed compliance exceptions |
 | Plugin System | Extensible per-manufacturer protocol plugins (DJI, Parrot, custom) |
-| CLI | Full-featured Click CLI with JSON output support |
+| CLI | Full-featured argparse CLI with JSON output support |
 
 ---
 
@@ -49,8 +49,8 @@
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/your-org/dronecmd.git
-cd dronecmd
+git clone https://github.com/rbenzing/DroneCMD.git
+cd DroneCMD
 python -m venv venv
 source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
@@ -70,8 +70,8 @@ pip install -e ".[all]"        # Everything
 ## 🖥️ CLI Usage
 
 ```bash
-# Capture IQ samples from SDR hardware
-dronecmd capture --frequency 2.44e9 --duration 30 --output capture.iq
+# Capture IQ samples from SDR hardware (2.44 GHz needs HackRF; default is rtl_sdr)
+dronecmd capture --platform hackrf --frequency 2.44e9 --duration 30 --output capture.iq
 
 # Analyze a capture file
 dronecmd analyze --input capture.iq --protocols mavlink,dji
@@ -118,21 +118,32 @@ DroneCMD exposes two API layers that are both maintained:
 
 ```python
 from capture.manager import CaptureManager
-manager = CaptureManager(frequency=2.44e9, sample_rate=2_048_000)
+
+manager = CaptureManager(platform="hackrf", sample_rate=2_048_000)
+iq_data = manager.load_file("capture.iq")
 packets = manager.extract_packets(iq_data, threshold=0.1)
 ```
 
 **Enhanced layer** — async streaming, structured configs, typed results:
 
 ```python
-from core.capture import EnhancedLiveCapture, SDRConfig
-from core.classification import EnhancedProtocolClassifier, ClassifierConfig
+from core.capture import EnhancedLiveCapture, SDRConfig, SDRPlatform
 
-config = SDRConfig(center_frequency_hz=2.44e9, sample_rate=2_048_000)
+# Field names are frequency_hz / sample_rate_hz; SDRConfig validates against
+# the platform's limits at construction (2.44 GHz requires HackRF).
+config = SDRConfig(
+    frequency_hz=2.44e9,
+    sample_rate_hz=2_048_000,
+    platform=SDRPlatform.HACKRF,
+)
 async with EnhancedLiveCapture(config) as capture:
     async for samples in capture.stream_samples():
-        result = classifier.classify(samples)
+        process(samples)  # each block is a numpy complex64 IQ array
 ```
+
+The `EnhancedProtocolClassifier.classify()` method operates on **extracted
+packet bytes**, not raw IQ — run demodulation/packet extraction first, then
+classify the resulting bytes.
 
 **Module map:**
 
@@ -142,17 +153,21 @@ async with EnhancedLiveCapture(config) as capture:
 - `plugins/` — Protocol plugin system: `base`, `registry`, `protocols/` (DJI, Parrot, generic)
 - `training/` — Classifier training pipeline: `dataset`, `train`
 - `utils/` — IQ file I/O, YAML config, logging, crypto, compat
-- `cli.py` — Click-based CLI entry point
+- `cli.py` — argparse-based CLI entry point
 
 ---
 
 ## 🔌 Plugin Development
 
-Use `plugins/protocols/_template.py` as the starting point. Implement `detect()`, `decode_packet()`, and declare capabilities via `PluginMetadata`. Register in `pyproject.toml`:
+Use `plugins/protocols/_template.py` as the starting point. Subclass
+`BaseProtocolPlugin` (from `plugins/base.py`) and implement `get_name()`,
+`get_version()`, `get_supported_protocols()`, `detect()` (returns
+`ProtocolDetectionResult`), and `parse_packet()` (returns `ProtocolParseResult`).
+Register the exact class name in `pyproject.toml`:
 
 ```toml
 [project.entry-points."dronecmd.plugins"]
-myplugin = "plugins.protocols.myplugin:MyPlugin"
+myplugin = "plugins.protocols.myplugin:MyProtocolPlugin"
 ```
 
 ---
@@ -166,7 +181,7 @@ pytest tests/test_fhss.py -v                    # Single file
 pytest -n auto                                  # Parallel execution
 ```
 
-101 unit tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default.
+126 unit tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default.
 
 ---
 
@@ -200,7 +215,7 @@ Built by **Russell Benzing**. DroneCMD is a defensive/research SDR toolkit for l
 
 ## 🆘 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-org/dronecmd/issues)
+- **Issues**: [GitHub Issues](https://github.com/rbenzing/DroneCMD/issues)
 - **Data collection guide**: [docs/iq_capture_guide.md](docs/iq_capture_guide.md)
 
 If DroneCMD is useful to you, you can support the work:
