@@ -158,9 +158,9 @@ dronecmd = "cli:cli_main"
 dronecmd-train = "training.train:main"
 
 [project.entry-points."dronecmd.plugins"]
-dji = "plugins.protocols.dji:DJIPlugin"
-parrot = "plugins.protocols.parrot:ParrotPlugin"
-generic = "plugins.protocols.generic:GenericPlugin"
+dji = "plugins.protocols.dji:DJIProtocolPlugin"
+parrot = "plugins.protocols.parrot:ParrotProtocolPlugin"
+generic = "plugins.protocols.generic:GenericProtocolPlugin"
 
 # ===================================
 # SETUPTOOLS CONFIGURATION
@@ -218,7 +218,14 @@ known_third_party = [
 ]
 
 [tool.mypy]
-python_version = "3.8"
+# 3.9 is the lowest version modern mypy (>=1.12) accepts; the package still
+# supports 3.8 at runtime.
+python_version = "3.9"
+# The project uses a flat top-level layout (core/, capture/, ...) rather than a
+# single `dronecmd` package, so tell mypy where package roots begin to avoid
+# "source file found twice under different module names" collisions.
+explicit_package_bases = true
+mypy_path = "."
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

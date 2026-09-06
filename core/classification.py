@@ -68,7 +68,7 @@ try:
     from exceptions import ModelNotTrainedError
 except ImportError:
     try:
-        from ..exceptions import ModelNotTrainedError
+        from exceptions import ModelNotTrainedError
     except ImportError:
 
         class ModelNotTrainedError(Exception):  # type: ignore[no-redef]

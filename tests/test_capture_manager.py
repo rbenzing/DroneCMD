@@ -42,7 +42,9 @@ class TestCaptureManagerInit:
 
 class TestSetters:
     def setup_method(self):
-        self.mgr = CaptureManager()
+        # HackRF covers the 2.4 GHz drone band used below; RTL-SDR tops out
+        # at 1.75 GHz and would reject the 2.44 GHz set_frequency test.
+        self.mgr = CaptureManager(platform="hackrf")
 
     def test_set_frequency(self):
         self.mgr.set_frequency(2_440_000_000.0)

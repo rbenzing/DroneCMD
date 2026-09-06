@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
-from exceptions import PowerLimitError, DwellTimeError
+from exceptions import PowerLimitError, DwellTimeError, FrequencyViolationError
 from injector.suringe import SafetyMonitor, InjectionConfig
 
 
@@ -76,6 +76,51 @@ class TestSafetyMonitorDurationCompliance:
 
     def test_no_session_started_does_not_raise(self):
         self.monitor.check_duration_compliance()  # injection_start_time is None
+
+
+# ---------------------------------------------------------------------------
+# SafetyMonitor — frequency band compliance
+# ---------------------------------------------------------------------------
+
+class TestSafetyMonitorFrequencyCompliance:
+    def setup_method(self):
+        self.config = InjectionConfig()
+        self.monitor = SafetyMonitor(self.config)
+
+    def test_24ghz_band_does_not_raise(self):
+        self.monitor.check_frequency_compliance(2.44e9)
+
+    def test_433mhz_band_does_not_raise(self):
+        self.monitor.check_frequency_compliance(433.5e6)
+
+    def test_915mhz_band_does_not_raise(self):
+        self.monitor.check_frequency_compliance(915e6)
+
+    def test_band_edges_do_not_raise(self):
+        self.monitor.check_frequency_compliance(2.4e9)      # lower edge
+        self.monitor.check_frequency_compliance(2.4835e9)   # upper edge
+
+    def test_out_of_band_raises(self):
+        with pytest.raises(FrequencyViolationError):
+            self.monitor.check_frequency_compliance(1.5e9)
+
+    def test_just_above_band_raises(self):
+        with pytest.raises(FrequencyViolationError):
+            self.monitor.check_frequency_compliance(2.5e9)
+
+    def test_violation_recorded(self):
+        try:
+            self.monitor.check_frequency_compliance(1.5e9)
+        except FrequencyViolationError:
+            pass
+        assert len(self.monitor.violations) == 1
+
+    def test_custom_allowed_range(self):
+        cfg = InjectionConfig(allowed_frequency_ranges_hz=((100e6, 200e6),))
+        monitor = SafetyMonitor(cfg)
+        monitor.check_frequency_compliance(150e6)  # in custom band
+        with pytest.raises(FrequencyViolationError):
+            monitor.check_frequency_compliance(2.44e9)  # outside custom band
 
 
 # ---------------------------------------------------------------------------

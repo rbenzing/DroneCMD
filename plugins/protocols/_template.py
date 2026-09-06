@@ -28,8 +28,8 @@ import numpy.typing as npt
 
 # Import from base plugin system
 try:
-    from ..base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
-    from ..protocols.generic import GenericProtocolPlugin
+    from plugins.base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
+    from plugins.protocols.generic import GenericProtocolPlugin
     PLUGIN_BASE_AVAILABLE = True
 except ImportError:
     PLUGIN_BASE_AVAILABLE = False

@@ -89,7 +89,7 @@ try:
     from exceptions import PowerLimitError, FrequencyViolationError, DwellTimeError
 except ImportError:
     try:
-        from ..exceptions import (
+        from exceptions import (
             PowerLimitError,
             FrequencyViolationError,
             DwellTimeError,

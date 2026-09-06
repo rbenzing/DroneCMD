@@ -34,11 +34,11 @@ import numpy.typing as npt
 # Import from core and capture modules
 try:
     from .manager import CaptureManager
-    from ..core.parsing import EnhancedPacketParser, ParserConfig
-    from ..core.classification import EnhancedProtocolClassifier, ClassifierConfig
-    from ..core.signal_processing import detect_packets, QualityMonitor
-    from ..core.demodulation import DemodulationEngine, DemodConfig, ModulationScheme
-    from ..utils.fileio import read_iq_file
+    from core.parsing import EnhancedPacketParser, ParserConfig
+    from core.classification import EnhancedProtocolClassifier, ClassifierConfig
+    from core.signal_processing import detect_packets, QualityMonitor
+    from core.demodulation import DemodulationEngine, DemodConfig, ModulationScheme
+    from utils.fileio import read_iq_file
     ENHANCED_AVAILABLE = True
 except ImportError:
     # Fallback for development/testing

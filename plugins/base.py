@@ -400,6 +400,88 @@ class ProtocolPlugin(BasePlugin):
         }
 
 
+# =============================================================================
+# SIMPLIFIED PROTOCOL-PLUGIN API
+# =============================================================================
+#
+# The bundled protocol plugins (DJI, Parrot, generic) are written against a
+# lightweight, protocol-oriented API rather than the fully abstract
+# ``ProtocolPlugin`` interface above. ``BaseProtocolPlugin`` bridges that
+# simplified API to the ``BasePlugin`` contract the registry expects, and the
+# two result dataclasses below carry the plugin-facing detection/parse fields.
+
+
+@dataclass
+class ProtocolDetectionResult:
+    """Result from a protocol plugin's ``detect()`` call."""
+
+    detected: bool = False
+    confidence: ConfidenceScore = 0.0
+    protocol_name: str = "unknown"
+    protocol_type: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProtocolParseResult:
+    """Result from a protocol plugin's ``parse_packet()`` call."""
+
+    success: bool = False
+    protocol_name: str = "unknown"
+    parsed_data: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class BaseProtocolPlugin(BasePlugin):
+    """
+    Concrete convenience base class for protocol plugins.
+
+    Bundled protocol plugins expose ``get_name()``, ``get_version()`` and
+    ``get_supported_protocols()`` plus ``detect()``/``parse_packet()`` rather
+    than implementing the abstract ``metadata``/``initialize``/``validate``
+    members of :class:`BasePlugin`. This base supplies working defaults for
+    those members (deriving :class:`PluginMetadata` from the ``get_*`` hooks)
+    so subclasses remain instantiable and discoverable by the plugin registry.
+    """
+
+    def get_name(self) -> str:
+        """Return the plugin's name (override in subclasses)."""
+        return self.__class__.__name__
+
+    def get_version(self) -> str:
+        """Return the plugin's version string (override in subclasses)."""
+        return "1.0.0"
+
+    def get_supported_protocols(self) -> List[str]:
+        """Return the protocol identifiers this plugin handles."""
+        return []
+
+    @property
+    def metadata(self) -> PluginMetadata:
+        """Build plugin metadata from the ``get_*`` hooks."""
+        return PluginMetadata(
+            name=self.get_name(),
+            version=self.get_version(),
+            description=(self.__doc__ or f"{self.get_name()} protocol plugin").strip(),
+            author="DroneCmd",
+            plugin_type=PluginType.PROTOCOL,
+            capabilities=[
+                PluginCapability.DETECT,
+                PluginCapability.DECODE,
+            ],
+            supported_protocols=list(self.get_supported_protocols()),
+        )
+
+    def initialize(self, **kwargs: Any) -> bool:
+        """Default initialization; subclasses may override."""
+        self._is_initialized = True
+        return True
+
+    def validate(self) -> bool:
+        """Default validation; subclasses may override."""
+        return True
+
+
 class InjectionPlugin(BasePlugin):
     """
     Base class for command injection plugins.

@@ -106,7 +106,7 @@ class SimpleProtocolClassifier:
         
         # Try to initialize enhanced classifier
         try:
-            from ..core.classification import EnhancedProtocolClassifier, ClassifierConfig
+            from core.classification import EnhancedProtocolClassifier, ClassifierConfig
             
             config = ClassifierConfig()
             if model_path:
@@ -357,7 +357,7 @@ def get_supported_platforms() -> List[str]:
     
     # Check for additional platform support
     try:
-        from ..core.capture import SDRPlatform
+        from core.capture import SDRPlatform
         platforms = [platform.value for platform in SDRPlatform]
     except ImportError:
         pass
@@ -414,7 +414,7 @@ def create_capture_session(
 # Legacy class names and functions for existing code
 try:
     from .manager import CaptureManager as SDRCapture  # Legacy name
-    from ..utils.fileio import read_iq_file, write_iq_file
+    from utils.fileio import read_iq_file, write_iq_file
     
     # Legacy function aliases
     def load_iq_data(filename: str):
@@ -454,7 +454,7 @@ def get_capture_capabilities() -> Dict[str, bool]:
 def _check_enhanced_core() -> bool:
     """Check if enhanced core systems are available."""
     try:
-        from ..core.capture import EnhancedLiveCapture
+        from core.capture import EnhancedLiveCapture
         return True
     except ImportError:
         return False
@@ -472,7 +472,7 @@ def _check_rtl_sdr() -> bool:
 def _check_file_io() -> bool:
     """Check if file I/O utilities are available."""
     try:
-        from ..utils.fileio import read_iq_file, write_iq_file
+        from utils.fileio import read_iq_file, write_iq_file
         return True
     except ImportError:
         return False

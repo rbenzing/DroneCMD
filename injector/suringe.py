@@ -40,10 +40,10 @@ import numpy.typing as npt
 
 # Import from core and injection modules
 try:
-    from ..core.fhss import EnhancedFHSSEngine, SimpleFHSS, FHSSBand, FHSSConfig
-    from ..core.replay import EnhancedReplayEngine, ReplayConfig, ReplayStrategy
-    from ..core.signal_processing import SignalProcessor, create_test_signal
-    from ..plugins.base import BaseProtocolPlugin
+    from core.fhss import EnhancedFHSSEngine, SimpleFHSS, FHSSBand, FHSSConfig
+    from core.replay import EnhancedReplayEngine, ReplayConfig, ReplayStrategy
+    from core.signal_processing import SignalProcessor, create_test_signal
+    from plugins.base import BaseProtocolPlugin
     from .obfuscation import ObfuscationEngine, ObfuscationConfig, apply_timing_jitter
 
     ENHANCED_AVAILABLE = True
@@ -55,7 +55,7 @@ try:
     from exceptions import PowerLimitError, FrequencyViolationError, DwellTimeError
 except ImportError:
     try:
-        from ..exceptions import (
+        from exceptions import (
             PowerLimitError,
             FrequencyViolationError,
             DwellTimeError,
@@ -127,6 +127,16 @@ class InjectionConfig:
     # Safety limits (enforced — not cosmetic)
     max_injection_duration_s: float = 60.0
     enable_compliance_monitoring: bool = True
+
+    # Permitted transmit bands (Hz). Frequencies outside every range raise
+    # FrequencyViolationError at injection time. Defaults to the license-free
+    # ISM/U-NII bands commonly used for drone control links.
+    allowed_frequency_ranges_hz: Tuple[Tuple[float, float], ...] = (
+        (433.05e6, 434.79e6),   # 433 MHz ISM (EU)
+        (902e6, 928e6),         # 915 MHz ISM (US)
+        (2.4e9, 2.4835e9),      # 2.4 GHz ISM
+        (5.725e9, 5.875e9),     # 5.8 GHz ISM / U-NII
+    )
 
     # Integration options
     fhss_config: Optional[Dict[str, Any]] = None
@@ -358,6 +368,26 @@ class SafetyMonitor:
             self.violations.append(msg)
             raise DwellTimeError(msg)
 
+    def check_frequency_compliance(self, frequency_hz: float) -> None:
+        """Assert the transmit frequency falls within a permitted band.
+
+        Raises:
+            FrequencyViolationError: if frequency_hz lies outside every range
+                in ``config.allowed_frequency_ranges_hz``.
+        """
+        ranges = self.config.allowed_frequency_ranges_hz
+        if any(lo <= frequency_hz <= hi for lo, hi in ranges):
+            return
+        allowed = ", ".join(
+            f"[{lo / 1e6:.1f}-{hi / 1e6:.1f}] MHz" for lo, hi in ranges
+        )
+        msg = (
+            f"Frequency {frequency_hz / 1e6:.3f} MHz outside permitted "
+            f"transmit bands: {allowed}"
+        )
+        self.violations.append(msg)
+        raise FrequencyViolationError(msg)
+
     def get_compliance_status(self) -> str:
         """Get current compliance status."""
         if not self.violations:
@@ -495,6 +525,9 @@ class InjectionEngine:
 
         # Set transmitter parameters
         if frequency is not None:
+            # Enforce band limits before touching hardware
+            if self.config.enable_safety_limits:
+                self.safety_monitor.check_frequency_compliance(frequency)
             self.transmitter.set_frequency(frequency)
 
         if power_dbm is not None:
@@ -591,6 +624,10 @@ class InjectionEngine:
         """
         if not self.transmitter.is_ready:
             raise RuntimeError("Transmitter not ready")
+
+        if frequency is not None and self.config.enable_safety_limits:
+            # Enforce band limits before touching hardware
+            self.safety_monitor.check_frequency_compliance(frequency)
 
         start_time = time.time()
         result = InjectionResult()

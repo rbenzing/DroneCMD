@@ -43,8 +43,8 @@ import numpy.typing as npt
 
 # Import from plugin framework
 try:
-    from ..base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
-    from ...core.signal_processing import SignalProcessor, analyze_signal_quality
+    from plugins.base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
+    from core.signal_processing import SignalProcessor, analyze_signal_quality
     PLUGIN_FRAMEWORK_AVAILABLE = True
 except ImportError:
     PLUGIN_FRAMEWORK_AVAILABLE = False

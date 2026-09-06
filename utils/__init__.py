@@ -197,7 +197,7 @@ except ImportError:
     def check_enhanced_availability():
         """Check if enhanced modules are available."""
         try:
-            from ..core import capture, demodulation, fhss
+            from core import capture, demodulation, fhss
 
             return True
         except ImportError:

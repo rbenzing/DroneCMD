@@ -125,12 +125,12 @@ def _safe_import(module_name: str, fallback_name: Optional[str] = None) -> Any:
 
 # Import enhanced modules with fallbacks
 try:
-    from ..core import fhss as _core_fhss
-    from ..core import signal_processing as _core_signal_processing
-    from ..core import capture as _core_capture
-    from ..core import demodulation as _core_demodulation
-    from ..core import classification as _core_classification
-    from ..capture import manager as _capture_manager
+    from core import fhss as _core_fhss
+    from core import signal_processing as _core_signal_processing
+    from core import capture as _core_capture
+    from core import demodulation as _core_demodulation
+    from core import classification as _core_classification
+    from capture import manager as _capture_manager
 
     ENHANCED_MODULES_AVAILABLE = True
 except ImportError:
@@ -341,7 +341,7 @@ class CaptureManager:
         else:
             # Fallback
             try:
-                from ..utils.fileio import read_iq_file
+                from utils.fileio import read_iq_file
 
                 data = read_iq_file(path)
                 self.captured_iq = [data]

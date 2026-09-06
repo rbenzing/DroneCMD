@@ -36,8 +36,8 @@ import numpy.typing as npt
 
 # Import from core modules and plugin base
 try:
-    from ...core.signal_processing import SignalProcessor, analyze_signal_quality
-    from ..base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
+    from core.signal_processing import SignalProcessor, analyze_signal_quality
+    from plugins.base import BaseProtocolPlugin, ProtocolDetectionResult, ProtocolParseResult
     CORE_AVAILABLE = True
 except ImportError:
     CORE_AVAILABLE = False

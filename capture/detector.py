@@ -36,11 +36,11 @@ from scipy.signal import correlate, find_peaks, welch
 
 # Import from core modules
 try:
-    from ..core.signal_processing import (
+    from core.signal_processing import (
         SignalProcessor, QualityMonitor, detect_packets, find_preamble,
         analyze_signal_quality
     )
-    from ..utils.fileio import read_iq_file
+    from utils.fileio import read_iq_file
     ENHANCED_AVAILABLE = True
 except ImportError:
     # Fallback for development/testing

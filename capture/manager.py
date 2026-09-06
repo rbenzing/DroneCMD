@@ -37,9 +37,9 @@ import numpy.typing as npt
 
 # Import from core modules
 try:
-    from ..core.capture import EnhancedLiveCapture, SDRConfig, SDRPlatform, GainMode, CaptureFormat
-    from ..core.signal_processing import detect_packets, find_preamble, SignalProcessor, QualityMonitor
-    from ..utils.fileio import read_iq_file, write_iq_file
+    from core.capture import EnhancedLiveCapture, SDRConfig, SDRPlatform, GainMode, CaptureFormat
+    from core.signal_processing import detect_packets, find_preamble, SignalProcessor, QualityMonitor
+    from utils.fileio import read_iq_file, write_iq_file
     CORE_AVAILABLE = True
 except ImportError:
     # Fallback for development/testing

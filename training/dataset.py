@@ -31,13 +31,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 
-from ..core.classification import (
+from core.classification import (
     AdvancedFeatureExtractor,
     ClassifierConfig,
     FeatureType,
 )
-from ..core.signal_processing import SignalProcessor, detect_packets
-from ..utils.fileio import read_iq_file
+from core.signal_processing import SignalProcessor, detect_packets
+from utils.fileio import read_iq_file
 
 logger = logging.getLogger(__name__)
 
