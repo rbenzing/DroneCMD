@@ -1,10 +1,8 @@
-"""Deterministic FSK/GFSK/QPSK modulators for the SP1 validation spine.
+"""Deterministic FSK/GFSK/QPSK/OFDM modulators for the SP1 validation spine.
 
 These generate reference IQ waveforms used to test detection, classification,
 and channel-impairment pipelines. All modulators are deterministic (no RNG)
 and normalize their output to unit average power as ``complex64``.
-
-OFDM is intentionally unsupported in SP1 (tracked separately; see Task 15).
 """
 from __future__ import annotations
 
@@ -56,6 +54,13 @@ def _qpsk(bits: npt.NDArray[np.float64], sps: int) -> npt.NDArray[np.complex128]
     return result
 
 
+def _ofdm(bits: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
+    """OFDM via the shared PHY in :mod:`core.ofdm` (deterministic, no RNG)."""
+    from core.ofdm import modulate_ofdm
+
+    return modulate_ofdm(bits.astype(np.uint8))
+
+
 def modulate(
     data: bytes,
     scheme: ModScheme,
@@ -68,24 +73,28 @@ def modulate(
     """Modulate ``data`` bytes to complex64 IQ, unit average power.
 
     FSK/GFSK: 1 bit/symbol; QPSK: 2 bits/symbol. Deterministic (no RNG).
-    OFDM is intentionally unsupported in SP1 (see Task 15).
+    OFDM ignores ``sps`` entirely -- its symbol length is fixed by the shared
+    :mod:`core.ofdm` profile (``N + CP`` samples/symbol), not by samples per
+    bit/symbol.
 
     Args:
         data: Payload bytes to modulate (MSB-first bit order).
-        scheme: Modulation scheme (``ModScheme.FSK``, ``GFSK``, or ``QPSK``).
-        sps: Samples per symbol.
+        scheme: Modulation scheme (``ModScheme.FSK``, ``GFSK``, ``QPSK``, or
+            ``OFDM``).
+        sps: Samples per symbol. Ignored for ``ModScheme.OFDM``.
         mod_index: FSK/GFSK modulation index (cycles/symbol of deviation).
         bt: GFSK Gaussian filter bandwidth-time product.
         rolloff: Reserved for future pulse-shaped schemes (unused in SP1).
 
     Returns:
-        Unit-average-power IQ samples as ``complex64``, length
-        ``n_symbols * sps`` where ``n_symbols = 8 * len(data)`` for FSK/GFSK
-        and ``4 * len(data)`` for QPSK.
+        Unit-average-power IQ samples as ``complex64``. For FSK/GFSK/QPSK,
+        length is ``n_symbols * sps`` where ``n_symbols = 8 * len(data)`` for
+        FSK/GFSK and ``4 * len(data)`` for QPSK. For OFDM, length is the
+        2-symbol STF+LTF preamble plus ``n_ofdm_symbols * 80`` data-symbol
+        samples (per the ``core.ofdm`` default profile).
 
     Raises:
-        ValueError: If ``scheme`` is ``ModScheme.OFDM`` or otherwise
-            unsupported.
+        ValueError: If ``scheme`` is otherwise unsupported.
     """
     if len(data) == 0:
         return np.zeros(0, dtype=np.complex64)
@@ -97,8 +106,10 @@ def modulate(
         iq = _fsk(bits, sps, mod_index, gaussian_bt=bt)
     elif scheme == ModScheme.QPSK:
         iq = _qpsk(bits, sps)
+    elif scheme == ModScheme.OFDM:
+        iq = _ofdm(bits)
     else:
-        raise ValueError(f"modulate() does not support {scheme} in SP1")
+        raise ValueError(f"modulate() does not support {scheme}")
     p = np.mean(np.abs(iq) ** 2)
     if p > 0:
         iq = iq / np.sqrt(p)

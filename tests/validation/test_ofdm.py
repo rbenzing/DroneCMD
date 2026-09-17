@@ -141,3 +141,13 @@ def test_engine_ofdm_override_from_other_scheme() -> None:
     engine = DemodulationEngine(DemodConfig(scheme=ModulationScheme.FSK))
     res = engine.demodulate(tx, scheme_override=ModulationScheme.OFDM)
     assert res.is_valid and np.array_equal(res.bits[: len(b)].astype(np.uint8), b)
+
+
+def test_ofdm_synth_output_power_normalized() -> None:
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(bytes(range(24)), ModScheme.OFDM)
+    assert iq.dtype == np.complex64
+    p = float(np.mean(np.abs(iq) ** 2))
+    assert abs(p - 1.0) < 0.1
