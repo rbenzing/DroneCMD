@@ -221,3 +221,6 @@ __marimo__/
 
 # setuptools_scm-generated version file
 _version.py
+
+# Internal SDD / superpowers artifacts (specs, plans) — kept locally, not published
+docs/superpowers/
