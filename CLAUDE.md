@@ -40,11 +40,20 @@ Test markers: `slow`, `integration`, `hardware`, `async`
 
 ### Code Quality
 ```bash
-# Run all checks before committing (flat layout — no `dronecmd` package)
-black . && isort . && flake8 && mypy core capture plugins utils injector cli.py
+# Format + lint everything (flat layout — no `dronecmd` package)
+black . && isort . && flake8
+
+# Type-check. `mypy validation` is the CI-enforced strict-clean gate; the
+# legacy modules carry pre-existing type debt and are not gated.
+mypy validation
+mypy core capture plugins utils injector cli.py   # legacy — has known findings
 
 bandit -r core capture plugins utils injector cli.py  # Security scanning
 ```
+
+CI (`.github/workflows/ci.yml`) runs `black`/`isort`/`flake8`/`mypy` scoped to
+`validation/` (already clean) plus the full `pytest` suite on Python 3.9–3.12
+for every push and PR to `main`.
 
 ### CLI Usage
 ```bash
@@ -54,7 +63,32 @@ dronecmd replay --input capture.iq --strategy intelligent --count 5
 dronecmd generate fhss --frequency 2.44e9 --data "test payload"
 dronecmd config show
 dronecmd config set capture.default_sample_rate 2048000
+
+# Empirical validation / T&E of the detect→classify pipeline
+dronecmd validate synth  --protocols mavlink,dji --snr=-20:20:2 --n 50 --out ds/
+dronecmd validate ingest --input captures/ --out ds/
+dronecmd validate run    --dataset ds/ --models models/ --report report.json --plots
 ```
+Note: `--snr` uses the equals form (`--snr=-20:20:2`) for ranges with a
+negative lower bound (argparse otherwise treats the value as a flag).
+
+### Versioning & Releases
+
+Versions are **derived from git tags** by `setuptools_scm` — there is no
+hardcoded version string to edit. `__init__.__version__` and
+`constants.FRAMEWORK_VERSION` both resolve from the installed package metadata
+(falling back to the scm-written `_version.py`, then `"0.0.0+unknown"`).
+
+**To cut a release ("version up"):**
+```bash
+git tag v1.2.3            # semver; the tag IS the version
+git push origin v1.2.3
+```
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the
+sdist + wheel (setuptools_scm pins them to `1.2.3`) and publishes a GitHub
+Release with auto-generated notes. The generated `_version.py` is git-ignored.
+Do **not** add a static `version =`/`__version__ =` string or reintroduce
+bump2version — tags are the single source of truth.
 
 ## Architecture
 
@@ -83,7 +117,9 @@ Use `asyncio.run()` for top-level async calls. Use `asyncio.create_task()` for b
 - **`plugins/`** — Protocol plugin system: `base.py` (abstract base classes), `registry.py` (discovery), `protocols/` (DJI, Parrot, generic, `_template.py`)
 - **`utils/`** — Cross-cutting: `config.py` (YAML config + profiles), `logging.py`, `fileio.py` (IQ file formats), `crypto.py`, `compat.py`
 - **`injector/`** — Packet injection: `suringe.py` (injection engine), `obfuscation.py`
-- **`cli.py`** — Click-based CLI with JSON output support
+- **`training/`** — Classifier training pipeline: `dataset.py` (feature extraction from labeled captures), `train.py` (sklearn ensemble training + cross-validation)
+- **`validation/`** — Validation & Test-and-Evaluation (T&E) spine: synthetic signal generator + calibrated channel model (`synth/`), real-capture ingestion (`ingest/`), unified SigMF-backed `LabeledDataset` (`dataset.py`), injectable detect→demod→classify `pipeline.py`, detection/classification metrics with bootstrap CIs (`metrics.py`), evaluation `harness.py`, JSON `report.py`, reproducibility manifest (`repro.py`). Library-first public API in `validation/__init__.py`; driven by `dronecmd validate`
+- **`cli.py`** — argparse-based CLI (subcommands: `capture`, `analyze`, `replay`, `generate`, `convert`, `config`, `info`, `train`, `validate`) with JSON output support
 - **`constants.py`** — RF frequency ranges, sample rates, protocol constants
 - **`exceptions.py`** — Custom exception hierarchy
 

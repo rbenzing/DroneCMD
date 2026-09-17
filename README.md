@@ -4,7 +4,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen?style=for-the-badge)]()
+[![CI](https://img.shields.io/github/actions/workflow/status/rbenzing/DroneCMD/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/rbenzing/DroneCMD/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/rbenzing/DroneCMD?style=for-the-badge)](https://github.com/rbenzing/DroneCMD/releases)
 [![SDR](https://img.shields.io/badge/SDR-HackRF%20%7C%20RTL--SDR-orange?style=for-the-badge)]()
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/russellbenzing)
 
@@ -34,6 +35,7 @@
 | FHSS Engine | Frequency hopping with FCC CFR 47 §15.247 compliance enforcement |
 | Signal Injection | Power-limited, dwell-time-enforced injection with typed compliance exceptions |
 | Plugin System | Extensible per-manufacturer protocol plugins (DJI, Parrot, custom) |
+| Validation & T&E | Measured detect→classify performance — Pd/Pfa, ROC, accuracy-vs-SNR with bootstrap CIs — over synthetic + real ground truth (`dronecmd validate`) |
 | CLI | Full-featured argparse CLI with JSON output support |
 
 ---
@@ -88,6 +90,10 @@ dronecmd generate fhss --frequency 2.44e9 --data "test payload"
 # Show/set configuration
 dronecmd config show
 dronecmd config set capture.default_sample_rate 2048000
+
+# Measure detect→classify performance (empirical validation / T&E)
+dronecmd validate synth --protocols mavlink,dji --snr=-20:20:2 --n 50 --out ds/
+dronecmd validate run   --dataset ds/ --models models/ --report report.json --plots
 ```
 
 ---
@@ -152,6 +158,7 @@ classify the resulting bytes.
 - `injector/` — Packet injection engine with FCC compliance enforcement
 - `plugins/` — Protocol plugin system: `base`, `registry`, `protocols/` (DJI, Parrot, generic)
 - `training/` — Classifier training pipeline: `dataset`, `train`
+- `validation/` — Validation & T&E spine: synthetic + real ground truth → detect→classify metrics (Pd/Pfa, ROC, accuracy-vs-SNR) with bootstrap CIs and a reproducibility manifest (`dronecmd validate`)
 - `utils/` — IQ file I/O, YAML config, logging, crypto, compat
 - `cli.py` — argparse-based CLI entry point
 
@@ -181,7 +188,22 @@ pytest tests/test_fhss.py -v                    # Single file
 pytest -n auto                                  # Parallel execution
 ```
 
-126 unit tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default.
+170+ tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default; CI runs the full suite on Python 3.9–3.12 for every push and PR.
+
+---
+
+## 🏷️ Versioning & Releases
+
+Versions are derived from **git tags** by `setuptools_scm` — no version string is
+hardcoded anywhere. To publish a release:
+
+```bash
+git tag v1.2.3            # semver; the tag is the version
+git push origin v1.2.3
+```
+
+Pushing a `v*` tag triggers the release workflow, which builds the sdist + wheel
+(pinned to the tag) and publishes a GitHub Release with auto-generated notes.
 
 ---
 
