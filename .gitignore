@@ -224,3 +224,6 @@ _version.py
 
 # Internal SDD / superpowers artifacts (specs, plans) — kept locally, not published
 docs/superpowers/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, review packages)
+.superpowers/
