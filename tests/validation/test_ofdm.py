@@ -130,3 +130,14 @@ def test_engine_demodulates_ofdm_via_override() -> None:
     engine = DemodulationEngine(DemodConfig(scheme=ModulationScheme.OFDM))
     res = engine.demodulate(tx, scheme_override=ModulationScheme.OFDM)
     assert res.is_valid and np.array_equal(res.bits[: len(b)].astype(np.uint8), b)
+
+
+def test_engine_ofdm_override_from_other_scheme() -> None:
+    from core.demodulation import DemodConfig, DemodulationEngine, ModulationScheme
+    from core.ofdm import modulate_ofdm
+
+    b = _bits(DATA_2SYM)
+    tx = modulate_ofdm(b).astype(np.complex64)
+    engine = DemodulationEngine(DemodConfig(scheme=ModulationScheme.FSK))
+    res = engine.demodulate(tx, scheme_override=ModulationScheme.OFDM)
+    assert res.is_valid and np.array_equal(res.bits[: len(b)].astype(np.uint8), b)

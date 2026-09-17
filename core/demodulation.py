@@ -1080,13 +1080,7 @@ class DemodulationEngine:
             # Create demodulator for override scheme
             temp_config = DemodConfig(
                 scheme=scheme,
-                sample_rate_hz=self.config.sample_rate_hz,
-                bitrate_bps=self.config.bitrate_bps,
-                **{
-                    k: v
-                    for k, v in self.config.__dict__.items()
-                    if k not in ("scheme",)
-                },
+                **{k: v for k, v in self.config.__dict__.items() if k != "scheme"},
             )
             if scheme in (ModulationScheme.OOK, ModulationScheme.ASK):
                 demodulator = OOKDemodulator(temp_config)
