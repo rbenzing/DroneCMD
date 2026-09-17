@@ -117,6 +117,24 @@ class TestDetectPackets:
             start, end = item
             assert start < end
 
+    def test_uses_power_not_magnitude_semantics(self):
+        """A 0.6-amplitude plateau next to a 1.0 peak must NOT be detected
+        under power semantics (0.36 < 0.5*1.0), even though magnitude (0.6)
+        would exceed a 0.5 relative threshold."""
+        plateau = (np.ones(400) * 0.6).astype(np.complex64)
+        peak = (np.ones(50) * 1.0).astype(np.complex64)
+        silence = np.zeros(200, dtype=np.complex64)
+        signal = np.concatenate([silence, plateau, silence, peak, silence])
+        regions = detect_packets(signal, threshold=0.5, min_gap=100)
+        # Only the 1.0 peak region survives; the 0.6 plateau is below power threshold.
+        # (peak length 50 < min_gap 100, so with min_gap filtering we expect ZERO
+        #  long regions — the plateau must not appear as a >100-sample region.)
+        for start, end in regions:
+            # No detected region may fall inside the plateau span [200, 600)
+            assert not (start >= 200 and end <= 600), (
+                f"plateau region {(start, end)} detected under magnitude semantics"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Preamble detection

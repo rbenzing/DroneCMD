@@ -288,5 +288,5 @@ required); if a helper is wanted later it is a light, pure-python dep — decide
 _(Populated during implementation; one entry per finding: module, symptom, RED test,
 fix, status.)_
 
-- **F1 (confirmed, design-time):** `core/signal_processing.py:455 detect_packets` uses
-  magnitude as "power" and has identical complex/real branches. Pending RED test + fix.
+- **F1 (fixed):** detect_packets now uses |x|**2 and the dead branch is removed. RED test:
+  test_uses_power_not_magnitude_semantics.

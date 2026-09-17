@@ -471,11 +471,8 @@ def detect_packets(
     if len(iq_samples) == 0:
         return []
 
-    # Calculate envelope/power
-    if np.iscomplexobj(iq_samples):
-        power = np.abs(iq_samples)
-    else:
-        power = np.abs(iq_samples)
+    # Calculate instantaneous power, consistent with calculate_power()/estimate_snr()
+    power = np.abs(iq_samples).astype(np.float64) ** 2
 
     # Adaptive threshold if needed
     if threshold < 1.0:
