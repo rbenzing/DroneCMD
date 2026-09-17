@@ -252,6 +252,24 @@ module = [
 ]
 ignore_missing_imports = true
 
+# Legacy first-party modules (the pre-`validation` codebase) carry pre-existing
+# type debt. When an explicitly-checked target such as the `validation` package
+# imports them, follow the import silently so their errors do not drown out
+# errors in the code actually under check. Running mypy on these modules
+# directly (e.g. `mypy core capture ...`) still reports their own errors.
+[[tool.mypy.overrides]]
+module = [
+    "core.*",
+    "capture.*",
+    "utils.*",
+    "plugins.*",
+    "injector.*",
+    "training.*",
+    "exceptions",
+    "constants",
+]
+follow_imports = "silent"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = [
