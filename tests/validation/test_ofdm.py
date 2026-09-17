@@ -89,3 +89,44 @@ def test_ofdm_survives_multipath_within_cp() -> None:
 
 def test_demodulate_ofdm_too_short_returns_empty() -> None:
     assert demodulate_ofdm(np.zeros(10, dtype=np.complex128)).size == 0
+
+
+def test_ofdm_demodulator_recovers_bits() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+    from core.ofdm import modulate_ofdm
+
+    b = _bits(DATA_2SYM)
+    tx = modulate_ofdm(b).astype(np.complex64)
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
+    res = OFDMDemodulator(cfg).demodulate(tx)
+    assert res.is_valid is True
+    assert np.array_equal(res.bits[: len(b)].astype(np.uint8), b)
+
+
+def test_ofdm_demodulator_short_input_invalid() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
+    res = OFDMDemodulator(cfg).demodulate(np.zeros(10, dtype=np.complex64))
+    assert res.is_valid is False
+    assert res.error_message
+
+
+def test_demodconfig_ofdm_properties() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme
+
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM, sample_rate_hz=1_000_000.0)
+    assert cfg.samples_per_symbol == 80  # N + CP
+    assert cfg.symbol_rate_hz == 1_000_000.0 / 80
+    assert ModulationScheme.OFDM.bits_per_symbol == 96
+
+
+def test_engine_demodulates_ofdm_via_override() -> None:
+    from core.demodulation import DemodConfig, DemodulationEngine, ModulationScheme
+    from core.ofdm import modulate_ofdm
+
+    b = _bits(DATA_2SYM)
+    tx = modulate_ofdm(b).astype(np.complex64)
+    engine = DemodulationEngine(DemodConfig(scheme=ModulationScheme.OFDM))
+    res = engine.demodulate(tx, scheme_override=ModulationScheme.OFDM)
+    assert res.is_valid and np.array_equal(res.bits[: len(b)].astype(np.uint8), b)

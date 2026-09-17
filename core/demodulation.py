@@ -46,14 +46,14 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 from scipy import signal
 from scipy.fft import fft, fftfreq, fftshift
 from scipy.optimize import minimize_scalar
-from scipy.signal import hilbert, butter, sosfilt, find_peaks, correlate
+from scipy.signal import butter, correlate, find_peaks, hilbert, sosfilt
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ class ModulationScheme(Enum):
     DPSK = "dpsk"  # Differential PSK
     QAM16 = "qam16"  # 16-QAM
     QAM64 = "qam64"  # 64-QAM
+    OFDM = "ofdm"  # Orthogonal Frequency-Division Multiplexing (multicarrier)
 
     @property
     def bits_per_symbol(self) -> int:
@@ -101,13 +102,21 @@ class ModulationScheme(Enum):
             self.DPSK: 1,
             self.QAM16: 4,
             self.QAM64: 6,
+            self.OFDM: 96,
         }
         return bits.get(self, 1)
 
     @property
     def requires_coherent_detection(self) -> bool:
         """Check if scheme requires coherent carrier recovery."""
-        coherent_schemes = {self.PSK, self.BPSK, self.QPSK, self.QAM16, self.QAM64}
+        coherent_schemes = {
+            self.PSK,
+            self.BPSK,
+            self.QPSK,
+            self.QAM16,
+            self.QAM64,
+            self.OFDM,
+        }
         return self in coherent_schemes
 
 
@@ -150,6 +159,8 @@ class DemodConfig:
         snr_estimation_method: Method for SNR estimation
         enable_performance_monitoring: Enable real-time performance metrics
         debug_mode: Enable debug output and intermediate results
+        ofdm_fft_size: OFDM FFT size (subcarrier count N); OFDM scheme only
+        ofdm_cp_len: OFDM cyclic prefix length in samples; OFDM scheme only
     """
 
     scheme: ModulationScheme = ModulationScheme.OOK
@@ -169,6 +180,8 @@ class DemodConfig:
     snr_estimation_method: str = "moment"
     enable_performance_monitoring: bool = True
     debug_mode: bool = False
+    ofdm_fft_size: int = 64
+    ofdm_cp_len: int = 16
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -189,13 +202,17 @@ class DemodConfig:
 
     @property
     def samples_per_symbol(self) -> int:
-        """Calculate samples per symbol."""
+        """Samples per symbol (OFDM: N + CP; else sample_rate / symbol_rate)."""
+        if self.scheme == ModulationScheme.OFDM:
+            return self.ofdm_fft_size + self.ofdm_cp_len
         symbol_rate = self.bitrate_bps / self.scheme.bits_per_symbol
         return int(self.sample_rate_hz / symbol_rate)
 
     @property
     def symbol_rate_hz(self) -> float:
-        """Calculate symbol rate in Hz."""
+        """OFDM symbols/s (sample_rate / (N + CP)); else bitrate / bits-per-symbol."""
+        if self.scheme == ModulationScheme.OFDM:
+            return self.sample_rate_hz / (self.ofdm_fft_size + self.ofdm_cp_len)
         return self.bitrate_bps / self.scheme.bits_per_symbol
 
 
@@ -942,6 +959,43 @@ class PSKDemodulator(BaseDemodulator):
             return symbols  # Fallback
 
 
+class OFDMDemodulator(BaseDemodulator):
+    """OFDM demodulator (full Schmidl & Cox receiver via :mod:`core.ofdm`)."""
+
+    def demodulate(self, iq_samples: IQSamples) -> DemodulationResult:
+        """Demodulate an OFDM burst to unpacked data bits."""
+        from core.ofdm import DEFAULT_OFDM_PROFILE, demodulate_ofdm
+
+        start_time = time.time()
+        result = DemodulationResult()
+        profile = DEFAULT_OFDM_PROFILE
+        try:
+            if len(iq_samples) < 2 * profile.symbol_len:
+                result.is_valid = False
+                result.error_message = (
+                    "Signal too short for OFDM (need >= STF + LTF preamble)"
+                )
+                return result
+            bits = demodulate_ofdm(iq_samples.astype(np.complex128), profile)
+            result.bits = bits.astype(np.uint8)
+            result.samples_processed = len(iq_samples)
+            result.symbols_decoded = (
+                len(bits) // profile.n_data_bits_per_symbol
+                if profile.n_data_bits_per_symbol
+                else 0
+            )
+            result.is_valid = len(bits) > 0
+            if len(bits) == 0:
+                result.error_message = "No OFDM data symbols recovered"
+        except Exception as e:  # noqa: BLE001 - mirror sibling demodulators
+            result.is_valid = False
+            result.error_message = str(e)
+            logger.error(f"OFDM demodulation failed: {e}")
+        finally:
+            result.processing_time_ms = (time.time() - start_time) * 1000
+        return result
+
+
 class DemodulationEngine:
     """
     Main demodulation engine supporting multiple modulation schemes.
@@ -990,6 +1044,8 @@ class DemodulationEngine:
             ModulationScheme.DPSK,
         ):
             demodulators[self.config.scheme] = PSKDemodulator(self.config)
+        elif self.config.scheme == ModulationScheme.OFDM:
+            demodulators[self.config.scheme] = OFDMDemodulator(self.config)
         else:
             raise NotImplementedError(
                 f"Demodulator for {self.config.scheme.value} not implemented"
@@ -1046,6 +1102,8 @@ class DemodulationEngine:
                 ModulationScheme.QPSK,
             ):
                 demodulator = PSKDemodulator(temp_config)
+            elif scheme == ModulationScheme.OFDM:
+                demodulator = OFDMDemodulator(temp_config)
             else:
                 result = DemodulationResult()
                 result.is_valid = False
