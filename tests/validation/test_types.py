@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from validation.types import (
-    Detection,
-    LabeledCapture,
-    ModScheme,
-)
+from validation.types import Detection, LabeledCapture, ModScheme
 
 
 def test_modscheme_values():

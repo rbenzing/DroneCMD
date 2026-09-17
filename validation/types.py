@@ -52,9 +52,7 @@ class DetectionMetrics:
     tp: int
     fp: int
     fn: int
-    roc: List[Tuple[float, float]] = field(
-        default_factory=list
-    )  # (pfa, pd) points
+    roc: List[Tuple[float, float]] = field(default_factory=list)  # ROC points
     min_detectable_snr_db: Optional[float] = None
     ci: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
