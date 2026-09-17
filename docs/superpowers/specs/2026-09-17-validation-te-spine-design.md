@@ -286,7 +286,75 @@ required); if a helper is wanted later it is a light, pure-python dep — decide
 ## 16. Appendix — bug-audit findings log
 
 _(Populated during implementation; one entry per finding: module, symptom, RED test,
-fix, status.)_
+fix, status. Finalized at Task 16, the SP1 definition-of-done gate.)_
 
-- **F1 (fixed):** detect_packets now uses |x|**2 and the dead branch is removed. RED test:
-  test_uses_power_not_magnitude_semantics.
+- **F1 — `core/signal_processing.detect_packets` power/magnitude confusion (FIXED, Task 3).**
+  Symptom: `detect_packets` computed `power = np.abs(iq)` (magnitude, not power `|x|²`)
+  despite the name, and its `if np.iscomplexobj(...) / else` branches were byte-identical
+  dead code — threshold semantics were therefore wrong for every caller. RED test:
+  `tests/test_signal_processing.py::test_uses_power_not_magnitude_semantics`. Fix: power is
+  now computed as `np.abs(iq_samples).astype(np.float64) ** 2`, consistent with
+  `calculate_power()`/`estimate_snr()` elsewhere in the module, and the dead branch was
+  removed. The full test suite (134 → 166 tests as validation-package tests were added
+  through Tasks 1–15) stayed green across all five caller modules
+  (`capture/detector.py`, `capture/manager.py`, `capture/sniffer.py`, `core/parsing.py`,
+  `plugins/protocols/generic.py`, plus `training/dataset.py` and `validation/pipeline.py`).
+  **Status: FIXED.**
+
+- **F2 — SigMF annotation round-trip loss (CONFIRMED, §11.5; MITIGATED, DEFERRED).**
+  Symptom: `utils.fileio._write_sigmf_data` hardcodes a top-level `"annotations": []` and
+  writes any caller-supplied metadata under `global.user:*` instead of the SigMF
+  `annotations` array, so annotations passed in through the standard `write_iq_file`
+  path do not round-trip through `utils.fileio`. Confirmed by inspection of
+  `utils/fileio.py` (`_write_sigmf_data`, ~line 910–945): the `sigmf_meta["annotations"]`
+  key is never populated from `metadata`, and extra keys are namespaced under
+  `global.user:*` rather than emitted as SigMF annotation objects. Impact: any consumer
+  that round-trips a `LabeledCapture`'s `truth_regions` purely through
+  `.sigmf-meta`/`utils.fileio` would silently lose region labels.
+  Mitigation (shipped, Task 7/8): `validation.dataset.LabeledDataset.write()` uses a
+  **dual-metadata** layout — it writes the standard `.sigmf-data`/`.sigmf-meta` pair via
+  `utils.fileio.write_iq_file` for sample round-trip, *and* writes a `.json` sidecar
+  (`capture_NNNNN.json`) carrying `{sample_rate, protocol, annotations, provenance}`.
+  `validation.ingest.labeler.load_labeled` reads the `.json` sidecar first when both exist
+  (see `validation/dataset.py` module docstring and `tests/validation/test_labeler.py::
+  test_label_from_sidecar_json`), so truth-region fidelity for the validation spine does
+  not depend on the SigMF writer's annotation bug. A direct fix in
+  `utils.fileio._write_sigmf_data` was scoped out of SP1 (touches a shared, widely-consumed
+  I/O module outside the `validation/` file-touch boundary and risks regressing other
+  SigMF consumers of `utils.fileio`) — logged as a candidate for SP2.
+  **Status: CONFIRMED, mitigated for the validation spine, fix deferred to SP2.**
+
+- **§11.2 — two divergent `detect_packets` implementations (CHARACTERIZED, non-blocking).**
+  `core/signal_processing.py:455` and `capture/detector.py` (plus a `SignalDetector` class)
+  implement detection independently. Rather than reconciling them for SP1,
+  `validation.pipeline.DetectClassifyPipeline` accepts an injectable `detector: DetectorFn`
+  (defaulting to `default_detector`, which wraps `core.signal_processing.detect_packets`),
+  so either implementation — or a `capture.detector`-backed one — can be run through the
+  harness and compared on Pd/Pfa via `evaluate(...)`. The mechanism to quantify the
+  divergence exists and is exercised by `tests/validation/test_pipeline.py`'s injectable-
+  detector tests; an actual side-by-side divergence run was not required for SP1 sign-off
+  (tracked as gap G2 in the plan self-review — optional follow-up, not blocking).
+  **Status: CHARACTERIZED / non-blocking.**
+
+- **§11.3 — `core/demodulation` byte-recovery fidelity (BOUNDED, Task 4).**
+  Concern: if demodulation is too lossy, classification accuracy in the harness reflects
+  demod noise rather than the classifier under test. Bounded by the Task 4 modulator
+  round-trip tests — `tests/validation/test_modulators.py::test_fsk_roundtrip_recovers_bits`,
+  `test_qpsk_roundtrip_recovers_bits`, `test_gfsk_roundtrip_recovers_bits` — which assert 0
+  bit-error-rate at high SNR through independent reference demodulators for each scheme,
+  giving a known-good floor against which pipeline-level demod (`validation.pipeline.
+  region_to_bytes`) can be judged. `DetectClassifyPipeline` additionally exposes
+  `use_truth_bytes=True` to bypass demodulation entirely and score the classifier on
+  known-truth bytes, isolating the two failure modes when needed.
+  **Status: BOUNDED / non-blocking.**
+
+- **§11.4 — `core/classification` feature-extraction determinism (EXERCISED, Task 11).**
+  Requirement: feature extraction must be deterministic for a given input, since
+  reproducibility (§2 goal 5) depends on it end-to-end. Exercised by the harness
+  determinism test — `tests/validation/test_harness.py::test_run_is_deterministic` — which
+  runs `run_evaluation`/`evaluate` twice with the same seed over the same dataset and
+  asserts the resulting `RunResult`/manifest hashes are byte-identical; this is further
+  confirmed at the whole-package level by `tests/validation/test_integration_smoke.py::
+  test_full_spine_smoke` (Task 16), which asserts `r1.manifest.dataset_hash ==
+  r2.manifest.dataset_hash` across two independent `evaluate()` calls.
+  **Status: EXERCISED / non-blocking.**
