@@ -1,7 +1,7 @@
 [build-system]
 requires = [
-    "setuptools>=65.0.0",
-    "setuptools-scm>=7.1.0",
+    "setuptools>=77.0.0",
+    "setuptools-scm>=8.0.0",
     "wheel>=0.41.0"
 ]
 build-backend = "setuptools.build_meta"
@@ -13,14 +13,14 @@ authors = [
 ]
 description = "Enhanced SDR-based drone command analysis and interference toolkit"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research", 
     "Intended Audience :: Telecommunications Industry",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -144,8 +144,7 @@ dev = [
     
     # Build tools
     "build>=0.10.0,<1.0.0",
-    "twine>=4.0.0,<5.0.0",
-    "bump2version>=1.0.1,<2.0.0",
+    "twine>=6.1.0",
     
     # Additional dev tools
     "ipdb>=0.13.13,<1.0.0",
@@ -167,6 +166,9 @@ generic = "plugins.protocols.generic:GenericProtocolPlugin"
 
 [tool.setuptools]
 include-package-data = true
+# Flat layout: the top-level single-file modules (incl. the cli entry point
+# target) must be installed alongside the discovered packages.
+py-modules = ["cli", "constants", "exceptions"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -177,7 +179,7 @@ exclude = ["tests*", "docs*"]
 "*" = ["py.typed", "data/*.json", "data/*.pkl", "config/*.yaml", "config/*.yml"]
 
 [tool.setuptools_scm]
-write_to = "_version.py"
+version_file = "_version.py"
 version_scheme = "release-branch-semver"
 
 # ===================================
@@ -249,6 +251,7 @@ module = [
     "sklearn.*",
     "joblib.*",
     "bitstring.*",
+    "matplotlib.*",
 ]
 ignore_missing_imports = true
 
@@ -332,24 +335,3 @@ per-file-ignores = [
 [tool.bandit]
 exclude_dirs = ["tests", "docs", "build", "dist"]
 skips = ["B101", "B601"]  # Skip assert_used and shell usage in tests
-
-# ===================================
-# DEVELOPMENT WORKFLOW
-# ===================================
-
-[tool.bump2version]
-current_version = "1.0.0"
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
-serialize = ["{major}.{minor}.{patch}"]
-search = "{current_version}"
-replace = "{new_version}"
-
-[[tool.bump2version.files]]
-filename = "pyproject.toml"
-search = 'version = "{current_version}"'
-replace = 'version = "{new_version}"'
-
-[[tool.bump2version.files]]
-filename = "dronecmd/__init__.py"
-search = '__version__ = "{current_version}"'
-replace = '__version__ = "{new_version}"'

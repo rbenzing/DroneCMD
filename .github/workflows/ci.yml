@@ -1,0 +1,91 @@
+name: CI
+
+# Runs on every push to main and every pull request targeting main.
+# Lint/type checks are scoped to the validation/ package (strict, already clean);
+# the full test suite runs across supported Python versions; the build job proves
+# the package (and its setuptools_scm version) still assembles on every change.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-type:
+    name: Lint & type-check (validation/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so setuptools_scm can resolve a version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: black
+        run: black --check validation tests/validation
+      - name: isort
+        run: isort --check-only validation tests/validation
+      - name: flake8
+        run: flake8 validation tests/validation
+      - name: mypy
+        run: mypy validation
+
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # setuptools_scm needs history/tags for the editable install
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: pytest (excluding slow/hardware)
+        run: pytest -m "not slow and not hardware" -q
+
+  build:
+    name: Build & metadata check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # required for setuptools_scm to derive the version from tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install the built wheel and smoke-import
+        run: |
+          python -m pip install dist/*.whl
+          python -c "from importlib.metadata import version; print('dronecmd', version('dronecmd'))"
+          python -c "import validation, core; print('top-level package imports OK')"
