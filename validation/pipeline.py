@@ -13,12 +13,15 @@ either a bare protocol name (``str``, treated as confidence 1.0) or a
 ``.confidence`` (accessed via ``getattr`` so this module never imports
 ``core.classification.ClassificationResult`` directly).
 
-Region-to-bytes demodulation is scheme-aware: when a capture's
-``provenance["scheme"]`` is ``"ofdm"`` (case-insensitive), each detected
-region is routed through :func:`ofdm_region_to_bytes`, which lazily uses the
-core OFDM receiver (:class:`core.demodulation.OFDMDemodulator`). Every other
-scheme (including unset) uses the inline FSK reference demodulator,
-:func:`region_to_bytes`, unchanged.
+Both detection and region-to-bytes demodulation are scheme-aware: when a
+capture's ``provenance["scheme"]`` is ``"ofdm"`` (case-insensitive),
+detection uses :func:`default_ofdm_detector` (a moving-average power
+envelope tuned to OFDM's high PAPR) instead of the injected ``detector``,
+and each detected region is routed through :func:`ofdm_region_to_bytes`,
+which lazily uses the core OFDM receiver
+(:class:`core.demodulation.OFDMDemodulator`). Every other scheme (including
+unset) uses the injected ``detector`` and the inline FSK reference
+demodulator, :func:`region_to_bytes`, unchanged.
 """
 from __future__ import annotations
 
@@ -51,6 +54,46 @@ def default_detector(
 ) -> List[Tuple[int, int]]:
     """Wrap :func:`core.signal_processing.detect_packets` as a ``DetectorFn``."""
     return detect_packets(iq, threshold=threshold, min_gap=min_gap)
+
+
+def default_ofdm_detector(
+    iq: IQSamples, threshold: float, min_gap: int
+) -> List[Tuple[int, int]]:
+    """Detect OFDM bursts via a smoothed (moving-average) power envelope.
+
+    OFDM is intrinsically high-PAPR, so the per-sample amplitude threshold in
+    :func:`core.signal_processing.detect_packets` fragments a burst into many
+    short sub-threshold pieces. Averaging instantaneous power over one OFDM
+    symbol fills those nulls, so the burst thresholds as a single region.
+
+    Args:
+        iq: Complex baseband samples.
+        threshold: Detection threshold; values < 1.0 are a fraction of the
+            peak smoothed power.
+        min_gap: Minimum region length in samples (shorter regions dropped).
+
+    Returns:
+        ``(start, end)`` regions of OFDM activity.
+    """
+    from core.ofdm import DEFAULT_OFDM_PROFILE
+
+    if len(iq) == 0:
+        return []
+    power = np.abs(iq).astype(np.float64) ** 2
+    window = DEFAULT_OFDM_PROFILE.symbol_len
+    if window > 1 and len(power) >= window:
+        kernel = np.ones(window, dtype=np.float64) / window
+        power = np.convolve(power, kernel, mode="same")
+    thr = threshold * float(np.max(power)) if threshold < 1.0 else threshold
+    active = power > thr
+    edges = np.diff(active.astype(int))
+    starts = np.where(edges == 1)[0] + 1
+    ends = np.where(edges == -1)[0] + 1
+    if len(ends) > 0 and (len(starts) == 0 or starts[0] > ends[0]):
+        starts = np.insert(starts, 0, 0)
+    if len(starts) > 0 and (len(ends) == 0 or ends[-1] < starts[-1]):
+        ends = np.append(ends, len(active))
+    return [(int(s), int(e)) for s, e in zip(starts, ends) if e - s > min_gap]
 
 
 def region_to_bytes(iq_region: IQSamples, sps: int = 8) -> bytes:
@@ -133,17 +176,22 @@ class DetectClassifyPipeline:
             ``ClassificationResult``-like object with
             ``.predicted_protocol``/``.confidence``.
         detector: Callable ``(iq, threshold, min_gap) -> [(start, end), ...]``
-            used to find candidate packet regions. Defaults to
+            used to find candidate packet regions for non-OFDM captures
+            (``provenance["scheme"]`` unset or not ``"ofdm"``). Defaults to
             :func:`default_detector`.
-        threshold: Detection threshold passed through to ``detector``.
+        threshold: Detection threshold passed through to whichever detector
+            is selected.
         min_gap: Minimum gap (samples) between packets, passed through to
-            ``detector``.
+            whichever detector is selected.
         sps: Samples per symbol used by :func:`region_to_bytes` when
             demodulating a region to bytes.
         use_truth_bytes: When ``True``, recover packet bytes from the
             overlapping truth region's ``provenance["payload_hex"]`` instead
             of demodulating the IQ region. Useful for isolating classifier
             accuracy from demodulator quality.
+        ofdm_detector: Detector used instead of ``detector`` when a
+            capture's ``provenance["scheme"]`` is ``"ofdm"``. Defaults to
+            :func:`default_ofdm_detector`.
     """
 
     def __init__(
@@ -154,6 +202,7 @@ class DetectClassifyPipeline:
         min_gap: int = 256,
         sps: int = 8,
         use_truth_bytes: bool = False,
+        ofdm_detector: DetectorFn = default_ofdm_detector,
     ) -> None:
         self.classifier = classifier
         self.detector = detector
@@ -161,6 +210,7 @@ class DetectClassifyPipeline:
         self.min_gap = min_gap
         self.sps = sps
         self.use_truth_bytes = use_truth_bytes
+        self.ofdm_detector = ofdm_detector
 
     def _truth_bytes(
         self, capture: LabeledCapture, start: int, end: int
@@ -182,9 +232,10 @@ class DetectClassifyPipeline:
             One :class:`~validation.types.Detection` per detected region, in
             detection order.
         """
-        regions = self.detector(capture.iq, self.threshold, self.min_gap)
-        detections: List[Detection] = []
         scheme = str(capture.provenance.get("scheme", "")).lower()
+        detector = self.ofdm_detector if scheme == "ofdm" else self.detector
+        regions = detector(capture.iq, self.threshold, self.min_gap)
+        detections: List[Detection] = []
         for start, end in regions:
             if self.use_truth_bytes:
                 pkt = self._truth_bytes(capture, start, end) or b""
