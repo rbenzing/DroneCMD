@@ -402,6 +402,31 @@ For more information, see the documentation.
         help='Random seed for reproducibility',
     )
 
+    # Validate command (T&E spine, SP1)
+    validate_parser = subparsers.add_parser(
+        'validate', help='Empirical validation / T&E of detect->classify pipeline'
+    )
+    validate_sub = validate_parser.add_subparsers(dest='validate_action')
+
+    v_synth = validate_sub.add_parser('synth', help='Generate a synthetic labeled dataset')
+    v_synth.add_argument('--protocols', required=True, help='Comma list, e.g. mavlink,dji')
+    v_synth.add_argument('--snr', required=True, help='LOW:HIGH:STEP in dB, e.g. -20:20:2')
+    v_synth.add_argument('--n', type=int, default=20, help='Captures per (protocol, SNR) cell')
+    v_synth.add_argument('--seed', type=int, default=42)
+    v_synth.add_argument('--out', required=True, help='Output dataset directory')
+
+    v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
+    v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
+    v_ingest.add_argument('--out', required=True, help='Output dataset directory')
+    v_ingest.add_argument('--sample-rate', type=float, default=2_048_000.0)
+
+    v_run = validate_sub.add_parser('run', help='Run the harness and write a report')
+    v_run.add_argument('--dataset', required=True, help='Dataset directory')
+    v_run.add_argument('--models', required=True, help='Trained model directory')
+    v_run.add_argument('--report', required=True, help='Output report.json path')
+    v_run.add_argument('--plots', action='store_true')
+    v_run.add_argument('--seed', type=int, default=42)
+
     return parser
 
 
@@ -919,6 +944,49 @@ def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput
         raise CLIError(f"Training failed: {e}")
 
 
+def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+    """Handle validate command — synth/ingest datasets or run the T&E harness."""
+    import numpy as np
+    from validation import (
+        create_synth_dataset, create_pipeline, evaluate, LabeledDataset, ModScheme,
+    )
+    from validation.report import write_report
+
+    action = getattr(args, 'validate_action', None)
+    try:
+        if action == 'synth':
+            lo, hi, step = (float(x) for x in args.snr.split(':'))
+            grid = list(np.arange(lo, hi + step / 2, step))
+            protocols = [p.strip() for p in args.protocols.split(',')]
+            default_scheme = {"mavlink": ModScheme.FSK, "dji": ModScheme.QPSK}
+            scheme_by_protocol = {p: default_scheme.get(p, ModScheme.FSK) for p in protocols}
+            ds = create_synth_dataset(
+                protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
+                scheme_by_protocol=scheme_by_protocol, seed=args.seed,
+            )
+            ds.write(Path(args.out))
+            output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")
+        elif action == 'ingest':
+            ds = LabeledDataset.from_dir(Path(args.input), sample_rate=args.sample_rate)
+            ds.write(Path(args.out))
+            output.info(f"Ingested {len(ds)} captures to {args.out}")
+        elif action == 'run':
+            clf = EnhancedProtocolClassifier(ClassifierConfig(model_path=Path(args.models)))
+            ds = LabeledDataset.from_dir(Path(args.dataset))
+            pipe = create_pipeline(clf)
+            result = evaluate(ds, pipe, seed=args.seed)
+            write_report(result, Path(args.report), plots=args.plots)
+            output.info(f"Pd={result.detection.pd:.3f} "
+                        f"accuracy={result.classification.accuracy:.3f} -> {args.report}")
+        else:
+            output.error("Usage: dronecmd validate {synth|ingest|run} ...")
+    except CLIError:
+        raise
+    except Exception as e:
+        output.error(f"Validate command failed: {e}")
+        raise CLIError(f"Validate command failed: {e}")
+
+
 async def main() -> int:
     """Main CLI entry point."""
     parser = create_parser()
@@ -972,6 +1040,8 @@ async def main() -> int:
             cmd_info(args, config, output)
         elif args.command == 'train':
             cmd_train(args, config, output)
+        elif args.command == 'validate':
+            cmd_validate(args, config, output)
         else:
             output.error(f"Unknown command: {args.command}")
             return 1
