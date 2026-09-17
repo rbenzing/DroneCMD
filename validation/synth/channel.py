@@ -52,7 +52,7 @@ def add_awgn_at_snr(
         (finite-sample) noise realization that was added.
     """
     sig_power = float(np.mean(np.abs(signal) ** 2))
-    if sig_power <= 0:
+    if (not np.isfinite(sig_power)) or sig_power <= 0:
         return signal.copy(), 0.0, float("inf")
     noise_power = sig_power / (10 ** (snr_db / 10.0))
     std = float(np.sqrt(noise_power / 2.0))  # per-component (I, Q) std

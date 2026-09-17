@@ -43,15 +43,18 @@ class LabeledDataset:
         return len(self._captures)
 
     def content_hash(self) -> str:
-        """Return a sha256 hash over each capture's IQ data and truth regions.
+        """Return a sha256 hash over each capture's IQ data, truth regions,
+        and sample rate.
 
         The hash is stable across calls for identical data and sensitive to
-        any change in sample values or ground-truth labeling.
+        any change in sample values, ground-truth labeling, or sample rate
+        (so datasets differing only by sample rate hash differently).
         """
         digest = hashlib.sha256()
         for capture in self._captures:
             digest.update(hash_array(capture.iq).encode())
             digest.update(json.dumps(capture.truth_regions, sort_keys=True).encode())
+            digest.update(str(capture.sample_rate).encode())
         return digest.hexdigest()
 
     def write(self, out_dir: Path) -> None:

@@ -62,16 +62,32 @@ def load_labeled(iq_path: Path, sample_rate: Optional[float] = None) -> LabeledC
 
     Returns:
         A LabeledCapture with the protocol label, optional SigMF-derived
-        truth regions, and provenance metadata (``source="real"``).
+        truth regions, and provenance metadata. When the sidecar carries a
+        persisted ``"provenance"`` dict (as written by
+        ``LabeledDataset.write``), it is preserved as the base -- so a
+        reloaded synthetic capture keeps ``source="synth"``, ``snr_db``,
+        ``payload_hex``, ``scheme``, ``requested_snr_db``, and ``seed`` --
+        with ``path``/``protocol``/``source`` filled in only where absent.
+        A genuine real capture with no persisted provenance still gets
+        ``source="real"``.
     """
     iq_path = Path(iq_path)
     iq: IQSamples = read_iq_file(iq_path).astype(np.complex64)
     meta = _read_sidecar(iq_path)
     protocol = meta.get("protocol") or iq_path.parent.name
     sample_rate = sample_rate or float(meta.get("sample_rate", 0.0)) or 0.0
+
+    persisted_provenance = meta.get("provenance")
+    prov: Dict[str, Any] = (
+        dict(persisted_provenance) if isinstance(persisted_provenance, dict) else {}
+    )
+    prov.setdefault("source", "real")  # a genuine real capture stays "real"
+    prov["path"] = str(iq_path)
+    prov.setdefault("protocol", protocol)  # already resolved above
+
     return LabeledCapture(
         iq=iq,
         sample_rate=sample_rate,
         truth_regions=_regions_from_sigmf(meta),
-        provenance={"source": "real", "path": str(iq_path), "protocol": protocol},
+        provenance=prov,
     )

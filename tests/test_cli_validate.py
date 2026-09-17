@@ -17,6 +17,15 @@ def test_parser_has_validate_synth():
     assert args.protocols == "mavlink"
 
 
+def test_parser_accepts_negative_snr_equals_form():
+    parser = create_parser()
+    args = parser.parse_args(
+        ["validate", "synth", "--protocols", "mavlink",
+         "--snr=-20:20:2", "--out", "x"]
+    )
+    assert args.snr == "-20:20:2"
+
+
 @pytest.mark.integration
 def test_validate_synth_writes_dataset(tmp_path):
     from cli import cmd_validate, ConfigManager, CLIOutput

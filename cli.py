@@ -410,7 +410,14 @@ For more information, see the documentation.
 
     v_synth = validate_sub.add_parser('synth', help='Generate a synthetic labeled dataset')
     v_synth.add_argument('--protocols', required=True, help='Comma list, e.g. mavlink,dji')
-    v_synth.add_argument('--snr', required=True, help='LOW:HIGH:STEP in dB, e.g. -20:20:2')
+    v_synth.add_argument(
+        '--snr', required=True,
+        help=(
+            'LOW:HIGH:STEP in dB, e.g. 0:20:2. A negative LOW bound requires '
+            "the '=' form (--snr=-20:20:2) -- a space-separated value "
+            "starting with '-' is otherwise parsed by argparse as a flag."
+        ),
+    )
     v_synth.add_argument('--n', type=int, default=20, help='Captures per (protocol, SNR) cell')
     v_synth.add_argument('--seed', type=int, default=42)
     v_synth.add_argument('--out', required=True, help='Output dataset directory')
@@ -426,6 +433,15 @@ For more information, see the documentation.
     v_run.add_argument('--report', required=True, help='Output report.json path')
     v_run.add_argument('--plots', action='store_true')
     v_run.add_argument('--seed', type=int, default=42)
+    v_run.add_argument(
+        '--use-truth-bytes', action='store_true',
+        help=(
+            'Score the classifier on ground-truth payload bytes instead of '
+            'demodulated bytes. Without this flag, CLI classification of '
+            'synthetic non-FSK schemes (e.g. QPSK) is demod-limited, since '
+            'region_to_bytes is a fixed FSK demodulator.'
+        ),
+    )
 
     return parser
 
@@ -973,7 +989,7 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
         elif action == 'run':
             clf = EnhancedProtocolClassifier(ClassifierConfig(model_path=Path(args.models)))
             ds = LabeledDataset.from_dir(Path(args.dataset))
-            pipe = create_pipeline(clf)
+            pipe = create_pipeline(clf, use_truth_bytes=args.use_truth_bytes)
             result = evaluate(ds, pipe, seed=args.seed)
             write_report(result, Path(args.report), plots=args.plots)
             output.info(f"Pd={result.detection.pd:.3f} "

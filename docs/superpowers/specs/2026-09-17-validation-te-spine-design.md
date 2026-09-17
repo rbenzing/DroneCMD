@@ -203,15 +203,23 @@ directly unit-testable against hand-built golden inputs.
 ## 10. CLI (`dronecmd validate`)
 
 ```
-dronecmd validate synth  --protocols mavlink,dji --snr -20:20:2 --n 50 --seed 42 --out ds/
+dronecmd validate synth  --protocols mavlink,dji --snr=-20:20:2 --n 50 --seed 42 --out ds/
 dronecmd validate ingest --input captures/ --out ds/
-dronecmd validate run    --dataset ds/ --models data/models/ --report report.json [--plots] [--seed 42]
+dronecmd validate run    --dataset ds/ --models data/models/ --report report.json [--plots] [--seed 42] [--use-truth-bytes]
 ```
 
-- `--snr LOW:HIGH:STEP` parses to an inclusive dB grid.
+- `--snr LOW:HIGH:STEP` parses to an inclusive dB grid. A negative `LOW` bound
+  requires the `=` form (`--snr=-20:20:2`), since a space-separated value
+  starting with `-` (`--snr -20:20:2`) is otherwise parsed by argparse as an
+  unrecognized flag; positive-low ranges accept either form
+  (`--snr 0:20:2` or `--snr=0:20:2`).
 - `run` loads the trained ensemble via existing `ClassifierConfig.model_path` /
   `ModelManager`, raising the existing `ModelNotTrainedError` if models are absent
   (no silent random predictions — consistent with current classifier contract).
+- `run --use-truth-bytes` scores the classifier on ground-truth payload bytes
+  instead of demodulated bytes; without it, CLI classification of synthetic
+  non-FSK schemes (e.g. QPSK) is demod-limited because `region_to_bytes` is a
+  fixed FSK demodulator (see §11.3).
 - Honors `--json` global output convention already in `cli.py`.
 
 ## 11. Bug-audit workstream (cross-cutting, **gating**)
