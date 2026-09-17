@@ -12,6 +12,13 @@ either a bare protocol name (``str``, treated as confidence 1.0) or a
 ``ClassificationResult``-like object exposing ``.predicted_protocol`` and
 ``.confidence`` (accessed via ``getattr`` so this module never imports
 ``core.classification.ClassificationResult`` directly).
+
+Region-to-bytes demodulation is scheme-aware: when a capture's
+``provenance["scheme"]`` is ``"ofdm"`` (case-insensitive), each detected
+region is routed through :func:`ofdm_region_to_bytes`, which lazily uses the
+core OFDM receiver (:class:`core.demodulation.OFDMDemodulator`). Every other
+scheme (including unset) uses the inline FSK reference demodulator,
+:func:`region_to_bytes`, unchanged.
 """
 from __future__ import annotations
 
@@ -77,6 +84,32 @@ def region_to_bytes(iq_region: IQSamples, sps: int = 8) -> bytes:
     if pad:
         bits = np.concatenate([bits, np.zeros(pad, dtype=np.uint8)])
     return np.packbits(bits).tobytes()
+
+
+def ofdm_region_to_bytes(iq_region: IQSamples) -> bytes:
+    """Demodulate an OFDM region to bytes via the core OFDM receiver.
+
+    Lazily imports :mod:`core.demodulation` so the pipeline import path stays
+    light. Returns ``b""`` on an empty region or an invalid demod result.
+
+    Args:
+        iq_region: Complex baseband samples spanning one detected OFDM
+            packet, including its STF+LTF preamble near the start.
+
+    Returns:
+        Packed bytes (``numpy.packbits``) of the recovered bit stream, or
+        ``b""`` if the region is empty or the OFDM demod could not recover a
+        valid burst.
+    """
+    if len(iq_region) == 0:
+        return b""
+    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
+    result = OFDMDemodulator(cfg).demodulate(iq_region.astype(np.complex64))
+    if not result.is_valid or len(result.bits) == 0:
+        return b""
+    return np.packbits(result.bits.astype(np.uint8)).tobytes()
 
 
 def _protocol_and_confidence(result: Union[str, object]) -> Tuple[str, float]:
@@ -151,9 +184,12 @@ class DetectClassifyPipeline:
         """
         regions = self.detector(capture.iq, self.threshold, self.min_gap)
         detections: List[Detection] = []
+        scheme = str(capture.provenance.get("scheme", "")).lower()
         for start, end in regions:
             if self.use_truth_bytes:
                 pkt = self._truth_bytes(capture, start, end) or b""
+            elif scheme == "ofdm":
+                pkt = ofdm_region_to_bytes(capture.iq[start:end])
             else:
                 pkt = region_to_bytes(capture.iq[start:end], sps=self.sps)
             result = self.classifier.classify(pkt, None)
