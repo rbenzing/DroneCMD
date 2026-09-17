@@ -34,7 +34,20 @@ For Advanced Use:
 """
 
 # Package metadata
-__version__ = "1.0.0"
+# Version is derived from git tags via setuptools_scm (single source of truth).
+try:
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
+    try:
+        __version__ = _pkg_version("dronecmd")
+    except PackageNotFoundError:  # running from a source checkout without an install
+        try:
+            from _version import version as __version__  # written by setuptools_scm
+        except Exception:
+            __version__ = "0.0.0+unknown"
+except Exception:  # pragma: no cover - importlib.metadata is stdlib on 3.8+
+    __version__ = "0.0.0+unknown"
 __author__ = "DroneCmd Development Team"
 __email__ = "contact@dronecmd.dev"
 __license__ = "Educational/Research Use Only"

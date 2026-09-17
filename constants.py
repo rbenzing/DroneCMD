@@ -27,7 +27,18 @@ import numpy as np
 # VERSION AND FRAMEWORK INFO
 # =============================================================================
 
-FRAMEWORK_VERSION = "2.0.0"
+# FRAMEWORK_VERSION tracks the installed package version (git-tag-driven via
+# setuptools_scm); it falls back gracefully in an uninstalled source checkout.
+try:
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
+    try:
+        FRAMEWORK_VERSION = _pkg_version("dronecmd")
+    except PackageNotFoundError:
+        FRAMEWORK_VERSION = "0.0.0+unknown"
+except Exception:  # pragma: no cover
+    FRAMEWORK_VERSION = "0.0.0+unknown"
 FRAMEWORK_NAME = "DroneCmd"
 FRAMEWORK_AUTHOR = "DroneCmd Framework Team"
 FRAMEWORK_LICENSE = "Educational/Research Use Only"

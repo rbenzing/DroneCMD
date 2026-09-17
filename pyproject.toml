@@ -145,7 +145,6 @@ dev = [
     # Build tools
     "build>=0.10.0,<1.0.0",
     "twine>=4.0.0,<5.0.0",
-    "bump2version>=1.0.1,<2.0.0",
     
     # Additional dev tools
     "ipdb>=0.13.13,<1.0.0",
@@ -332,24 +331,3 @@ per-file-ignores = [
 [tool.bandit]
 exclude_dirs = ["tests", "docs", "build", "dist"]
 skips = ["B101", "B601"]  # Skip assert_used and shell usage in tests
-
-# ===================================
-# DEVELOPMENT WORKFLOW
-# ===================================
-
-[tool.bump2version]
-current_version = "1.0.0"
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
-serialize = ["{major}.{minor}.{patch}"]
-search = "{current_version}"
-replace = "{new_version}"
-
-[[tool.bump2version.files]]
-filename = "pyproject.toml"
-search = 'version = "{current_version}"'
-replace = 'version = "{new_version}"'
-
-[[tool.bump2version.files]]
-filename = "dronecmd/__init__.py"
-search = '__version__ = "{current_version}"'
-replace = '__version__ = "{new_version}"'
