@@ -87,3 +87,29 @@ def test_run_evaluation_reports_profile_id() -> None:
     result = run_evaluation(ds, pipe, HarnessConfig())
     assert result.profile_id is not None
     assert result.profile_id.accuracy >= 0.9  # blind resolution at 30 dB
+
+
+def test_profile_id_spans_sc_and_ofdm() -> None:
+    """Blind profile-ID accuracy is high on a mixed single-carrier + OFDM
+    dataset, and OFDM profile names flow into the confusion matrix."""
+    spec = DatasetSpec(
+        protocols=["g", "w", "n"],
+        snr_grid_db=[30.0],
+        n_per_cell=3,
+        sample_rate=2_048_000.0,
+        seed=8,
+        profile_by_protocol={"g": "sik_gfsk", "w": "wifi_20", "n": "ofdm_nb"},
+    )
+    ds = LabeledDataset(build_scenario(spec))
+
+    class _Clf:
+        def classify(
+            self, packet_bytes: bytes, signal_metrics: Optional[dict] = None
+        ) -> str:
+            return "x"
+
+    pipe = DetectClassifyPipeline(_Clf())
+    result = run_evaluation(ds, pipe, HarnessConfig())
+    assert result.profile_id is not None
+    assert result.profile_id.accuracy >= 0.8  # blind resolution at 30 dB
+    assert {"sik_gfsk", "wifi_20", "ofdm_nb"} <= set(result.profile_id.confusion.keys())
