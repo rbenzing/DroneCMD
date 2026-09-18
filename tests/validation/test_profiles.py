@@ -65,7 +65,7 @@ def test_ofdm_catalog_has_broader_profiles() -> None:
     from core.ofdm import OFDMProfile
     from core.profiles import OFDM_CATALOG, Family, all_profile_names, family_of
 
-    expected = {"wifi_20", "wifi_40", "ofdm_nb", "wifi_20_longcp", "wifi_20_altpilot"}
+    expected = {"wifi_20", "wifi_40", "ofdm_nb", "wifi_20_longcp"}
     assert expected <= set(OFDM_CATALOG)
     for name in expected:
         assert isinstance(OFDM_CATALOG[name], OFDMProfile)
@@ -85,12 +85,6 @@ def test_ofdm_catalog_distinct_shapes() -> None:
     # same-N CP variant differs only in cp_len
     assert c["wifi_20_longcp"].fft_size == 64 and c["wifi_20_longcp"].cp_len == 32
     assert c["wifi_20"].cp_len == 16
-    # same-N layout variant differs only in pilot placement
-    assert c["wifi_20_altpilot"].fft_size == 64 and c["wifi_20_altpilot"].cp_len == 16
-    assert set(c["wifi_20_altpilot"].pilot_carriers) != set(c["wifi_20"].pilot_carriers)
-    assert set(c["wifi_20_altpilot"].occupied_carriers) == set(
-        c["wifi_20"].occupied_carriers
-    )
 
 
 def test_ofdm_catalog_profiles_roundtrip() -> None:

@@ -13,6 +13,7 @@ from typing import Optional, Tuple, TypeVar
 import numpy as np
 import numpy.typing as npt
 
+from core.ofdm import OFDMProfile, ofdm_equalized_symbols
 from core.profiles import SC_CATALOG, Family, SCMod, SCProfileSpec
 from core.single_carrier import (
     SC_SYNC_THRESHOLD,
@@ -38,6 +39,48 @@ OFDM_FAMILY_THRESHOLD = 0.5
 # the co-requirement that rejects the single-carrier preamble's spurious CP
 # self-match, which PAPR does not share.
 PAPR_OFDM_THRESHOLD = 4.0
+
+# Mean data-subcarrier EVM (distance to the nearest ideal QPSK point) above
+# which a region's best-fitting OFDM profile is NOT credible OFDM -- a loud-
+# failure ceiling for `resolve_ofdm_profile`. Genuine correct-profile OFDM
+# equalizes onto the unit-magnitude QPSK constellation (EVM ~0 at high SNR,
+# rising with noise); a wrong CP mis-windows every FFT and a wrong layout
+# mis-equalizes every bin, and a misrouted single-carrier region has no
+# OFDM structure at all -> EVM near/above the ~1.4 max constellation spacing.
+#
+# Tuned from 0.9 to 0.65 (P2-OFDM plan T3 measurement): the naive 0.9 sat
+# ABOVE the misrouted-single-carrier floor, not below it. Measured, wifi_20
+# correct-profile EVM (30 finite-region seeds per SNR): mean/max 0.38/0.45 @
+# 10 dB, 0.12/0.15 @ 20 dB, 0.04/0.05 @ 30 dB. Measured misrouted-region EVM
+# (best OFDM profile fit, GFSK sps=8 mod_index=0.7 bt=0.5 over payload
+# lengths 24-200 bytes): 0.726-0.753; FSK: ~0.74. 0.65 sits in the resulting
+# gap (above genuine OFDM down to the ~10 dB normal-SNR floor, below every
+# measured misrouted-single-carrier fit). As with OFDM_SYNC_THRESHOLD, the
+# distributions overlap below the normal-SNR band (correct-profile EVM
+# reaches ~0.86 at 5 dB, above this ceiling; no scalar is airtight there);
+# the residual is measured by the profile-ID/BER metrics, not claimed as a
+# hard guarantee. The loud-failure guarantee holds at normal operating SNR.
+OFDM_EVM_MAX = 0.65
+
+_QPSK_SCALE = 1.0 / np.sqrt(2.0)
+
+
+def _ofdm_data_evm(iq: Complex, profile: OFDMProfile) -> float:
+    """Mean distance of equalized data subcarriers to the nearest ideal QPSK
+    point over a trial demod with ``profile`` (``+inf`` if no data symbol).
+
+    Low for the true profile; high when a wrong CP mis-windows the per-symbol
+    FFT or a wrong pilot/data layout mis-equalizes. This is the CP/layout-
+    selective signal the FFT-size-selective sync metric cannot provide.
+    """
+    syms = ofdm_equalized_symbols(np.asarray(iq, dtype=np.complex128), profile)
+    if syms.size == 0:
+        return float("inf")
+    ideal = (
+        np.where(syms.real >= 0.0, 1.0, -1.0)
+        + 1j * np.where(syms.imag >= 0.0, 1.0, -1.0)
+    ) * _QPSK_SCALE
+    return float(np.mean(np.abs(syms - ideal)))
 
 
 def _cp_autocorr_peak(iq: Complex, n_fft: int, cp: int) -> float:

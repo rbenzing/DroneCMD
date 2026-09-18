@@ -164,3 +164,70 @@ def test_profile_id_accuracy_degrades_gracefully() -> None:
         acc[snr] = correct / total
     assert acc[25.0] >= 0.9  # strong SNR: near-perfect blind profile-ID
     assert acc[15.0] <= acc[25.0]  # graceful (non-increasing) degradation
+
+
+def _ofdm_noisy(profile_name: str, snr_db: float, seed: int) -> "np.ndarray":
+    """Modulate a fixed payload with a catalog OFDM profile at a target SNR."""
+    from core.ofdm import modulate_ofdm
+    from core.profiles import OFDM_CATALOG
+    from validation.repro import rng
+    from validation.synth.channel import add_awgn_at_snr
+
+    b = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1] * 8, dtype=np.uint8)
+    clean = modulate_ofdm(b, OFDM_CATALOG[profile_name]).astype(np.complex128)
+    g = rng(seed)
+    noisy, _, _ = add_awgn_at_snr(clean, snr_db, g)
+    return noisy.astype(np.complex128)
+
+
+def test_ofdm_data_evm_low_for_correct_profile() -> None:
+    from core.blind import OFDM_EVM_MAX, _ofdm_data_evm
+    from core.profiles import OFDM_CATALOG
+
+    rx = _ofdm_noisy("wifi_20", 30.0, 1)
+    evm = _ofdm_data_evm(rx, OFDM_CATALOG["wifi_20"])
+    assert evm < 0.2
+    assert evm < OFDM_EVM_MAX
+
+
+def test_ofdm_data_evm_empty_region_is_inf() -> None:
+    from core.blind import _ofdm_data_evm
+    from core.profiles import OFDM_CATALOG
+
+    assert _ofdm_data_evm(
+        np.zeros(4, dtype=np.complex128), OFDM_CATALOG["wifi_20"]
+    ) == float("inf")
+
+
+def test_ofdm_evm_separates_same_n_variants() -> None:
+    """RISK GATE: correct-profile EVM is separably below same-N-wrong EVM.
+
+    Covers the CP variant (wifi_20 vs wifi_20_longcp) across the normal-SNR
+    band. A same-N alternate-pilot-layout variant (wifi_20_altpilot) was also
+    measured here and found NOT separably discriminable at this margin
+    (shared occupied bins -> only a systematic, payload-dependent CPE bias,
+    not a noise-scaled error) -- per the Fallback Ruling in the task header
+    it was dropped from OFDM_CATALOG rather than kept with a weakened
+    assertion."""
+    from core.blind import _ofdm_data_evm
+    from core.profiles import OFDM_CATALOG
+
+    for snr in (10.0, 20.0, 30.0):
+        rx20 = _ofdm_noisy("wifi_20", snr, 7)
+        evm_correct = _ofdm_data_evm(rx20, OFDM_CATALOG["wifi_20"])
+        evm_cp = _ofdm_data_evm(rx20, OFDM_CATALOG["wifi_20_longcp"])
+        assert evm_correct + 0.2 < evm_cp, f"CP not separated @ {snr} dB"
+
+
+def test_ofdm_evm_ceiling_rejects_single_carrier() -> None:
+    """A misrouted single-carrier region scores above the ceiling on every
+    OFDM profile (loud-failure ceiling placement)."""
+    from core.blind import OFDM_EVM_MAX, _ofdm_data_evm
+    from core.profiles import OFDM_CATALOG
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    gfsk = modulate(bytes(range(48)), ModScheme.GFSK, sps=8, mod_index=0.7, bt=0.5)
+    y = gfsk.astype(np.complex128)
+    best = min(_ofdm_data_evm(y, p) for p in OFDM_CATALOG.values())
+    assert best > OFDM_EVM_MAX

@@ -4,8 +4,8 @@ A profile bundles a modulation with its single-carrier PHY parameters
 (:class:`core.single_carrier.SCProfile`) under a stable name, so datasets,
 the blind resolver, and the CLI all refer to the same catalog. Split by
 :class:`Family`; the OFDM catalog holds a curated set of profiles with
-distinct FFT sizes and same-N CP/layout variants. This module depends
-only on :mod:`core.single_carrier` and :mod:`core.ofdm` -- no heavy imports.
+distinct FFT sizes and a same-N CP variant. This module depends only on
+:mod:`core.single_carrier` and :mod:`core.ofdm` -- no heavy imports.
 """
 from __future__ import annotations
 
@@ -107,15 +107,20 @@ def _ofdm_profile(
 
 # Broader OFDM catalog (see the design spec). wifi_20 == DEFAULT_OFDM_PROFILE.
 # Distinct FFT sizes (wifi_20/wifi_40/ofdm_nb) are separated blindly by the
-# Schmidl & Cox sync gate; the same-N variants (wifi_20_longcp = long CP,
-# wifi_20_altpilot = alternate pilot layout) are separated by the trial-demod
-# EVM tiebreak in `core.blind.resolve_ofdm_profile`.
+# Schmidl & Cox sync gate; the same-N variant (wifi_20_longcp = long CP) is
+# separated by the trial-demod EVM tiebreak in
+# `core.blind.resolve_ofdm_profile`. A same-N alternate-pilot-layout variant
+# was evaluated and dropped (P2-OFDM plan T3 risk-gate measurement): it
+# shares all 52 occupied bins with wifi_20, so a wrong-layout trial demod
+# produces only a systematic, payload-dependent common-phase-error bias
+# rather than a noise-scaled error, and that bias is not reliably separable
+# from genuine wifi_20 EVM at the normal-SNR band (fails the required 0.2 EVM
+# margin at 20/30 dB, and at 10 dB in most seeds).
 OFDM_CATALOG: Dict[str, OFDMProfile] = {
     "wifi_20": DEFAULT_OFDM_PROFILE,
     "wifi_40": _ofdm_profile(128, 32, 58, (-53, -25, -11, 11, 25, 53)),
     "ofdm_nb": _ofdm_profile(32, 8, 13, (-11, -3, 3, 11)),
     "wifi_20_longcp": _ofdm_profile(64, 32, 26, (-21, -7, 7, 21)),
-    "wifi_20_altpilot": _ofdm_profile(64, 16, 26, (-25, -11, 11, 25)),
 }
 
 # The framework default single-carrier profile name (the GFSK default).
