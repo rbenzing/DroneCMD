@@ -50,3 +50,21 @@ def test_bootstrap_ci_brackets_mean() -> None:
     vals = list(np.r_[np.ones(50), np.zeros(50)])  # mean 0.5
     lo, hi = bootstrap_ci(vals, n=500, seed=1)
     assert lo < 0.5 < hi
+
+
+def test_profile_id_metrics_basic() -> None:
+    from validation.metrics import profile_id_metrics
+
+    pairs = [("ble_1m", "ble_1m"), ("ble_1m", "sik_gfsk"), ("qpsk_link", "qpsk_link")]
+    m = profile_id_metrics(pairs, snr_by_pair=[30.0, 5.0, 30.0])
+    assert abs(m.accuracy - 2 / 3) < 1e-9
+    assert m.confusion["ble_1m"]["sik_gfsk"] == 1
+    assert m.accuracy_by_snr[30.0] == 1.0
+    assert m.accuracy_by_snr[5.0] == 0.0
+
+
+def test_profile_id_metrics_empty() -> None:
+    from validation.metrics import profile_id_metrics
+
+    m = profile_id_metrics([])
+    assert m.accuracy == 0.0

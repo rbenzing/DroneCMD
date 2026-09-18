@@ -23,6 +23,7 @@ from validation.metrics import (
     detection_metrics,
     match_detections,
     overlap_iou,
+    profile_id_metrics,
 )
 from validation.pipeline import DetectClassifyPipeline
 from validation.repro import capture_manifest, hash_config
@@ -122,6 +123,8 @@ def run_evaluation(
     matched: List[Tuple[int, int, int]] = []
     pairs: List[Tuple[str, str]] = []
     snr_by_pair: List[float] = []
+    profile_pairs: List[Tuple[str, str]] = []
+    profile_snr: List[float] = []
     total_samples = 0
     pd_by_snr: Dict[float, List[int]] = {}
 
@@ -139,11 +142,17 @@ def run_evaluation(
         snr = float(capture.provenance.get("snr_db", 0.0))
         pd_by_snr.setdefault(round(snr, 0), []).append(1 if tp > 0 else 0)
 
+        truth_profile = str(capture.provenance.get("profile", ""))
         for detection in detections:
             pair = _match_pair(detection, capture.truth_regions, config.iou_threshold)
             if pair is not None:
                 pairs.append(pair)
                 snr_by_pair.append(snr)
+                if truth_profile:
+                    profile_pairs.append(
+                        (truth_profile, detection.resolved_profile or "none")
+                    )
+                    profile_snr.append(snr)
 
     # Minimum-detectable SNR: lowest bucket whose per-bucket Pd clears the
     # target.
@@ -162,6 +171,7 @@ def run_evaluation(
         min_snr=min_snr,
     )
     cls_metrics = classification_metrics(pairs, snr_by_pair=snr_by_pair)
+    prof_metrics = profile_id_metrics(profile_pairs, snr_by_pair=profile_snr)
 
     # Bootstrap confidence intervals on the headline numbers -- every
     # reported metric carries a CI, not just a point estimate.
@@ -170,6 +180,9 @@ def run_evaluation(
     )
     cls_metrics.ci["accuracy"] = bootstrap_ci(
         [1.0 if truth == pred else 0.0 for (truth, pred) in pairs], seed=config.seed
+    )
+    prof_metrics.ci["accuracy"] = bootstrap_ci(
+        [1.0 if t == p else 0.0 for (t, p) in profile_pairs], seed=config.seed
     )
 
     config_hash = hash_config(asdict(config))
@@ -180,5 +193,8 @@ def run_evaluation(
         model_hash=model_hash,
     )
     return RunResult(
-        detection=det_metrics, classification=cls_metrics, manifest=manifest
+        detection=det_metrics,
+        classification=cls_metrics,
+        manifest=manifest,
+        profile_id=prof_metrics,
     )

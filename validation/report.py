@@ -16,6 +16,7 @@ def result_to_dict(result: RunResult) -> Dict[str, Any]:
         "detection": asdict(result.detection),
         "classification": asdict(result.classification),
         "manifest": asdict(result.manifest),
+        "profile_id": asdict(result.profile_id) if result.profile_id else None,
     }
 
 

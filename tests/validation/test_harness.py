@@ -64,3 +64,26 @@ def test_high_snr_detects_and_classifies() -> None:
     assert r.manifest.dataset_hash
     assert "pd" in r.detection.ci
     assert "accuracy" in r.classification.ci
+
+
+def test_run_evaluation_reports_profile_id() -> None:
+    spec = DatasetSpec(
+        protocols=["a", "b"],
+        snr_grid_db=[30.0],
+        n_per_cell=2,
+        sample_rate=2_048_000.0,
+        seed=3,
+        profile_by_protocol={"a": "ble_1m", "b": "qpsk_link"},
+    )
+    ds = LabeledDataset(build_scenario(spec))
+
+    class _StubClf:
+        def classify(
+            self, packet_bytes: bytes, signal_metrics: Optional[dict] = None
+        ) -> str:
+            return "x"
+
+    pipe = DetectClassifyPipeline(_StubClf())
+    result = run_evaluation(ds, pipe, HarnessConfig())
+    assert result.profile_id is not None
+    assert result.profile_id.accuracy >= 0.9  # blind resolution at 30 dB

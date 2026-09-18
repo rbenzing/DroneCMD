@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from validation.repro import rng
-from validation.types import ClassificationMetrics, DetectionMetrics
+from validation.types import ClassificationMetrics, DetectionMetrics, ProfileIdMetrics
 
 
 def overlap_iou(a: Tuple[int, int], b: Tuple[int, int]) -> float:
@@ -162,6 +162,39 @@ def classification_metrics(
         confusion=confusion,
         per_class=per_class,
         accuracy_by_snr=acc_by_snr,
+    )
+
+
+def profile_id_metrics(
+    pairs: List[Tuple[str, str]],
+    snr_by_pair: Optional[List[float]] = None,
+) -> ProfileIdMetrics:
+    """Blind profile-ID accuracy from ``(truth_profile, resolved_profile)`` pairs.
+
+    Args:
+        pairs: ``(truth_profile, resolved_profile)`` pairs; a no-lock resolve
+            should be passed as the string ``"none"`` by the caller.
+        snr_by_pair: Optional per-pair SNR (dB) for bucketed accuracy.
+
+    Returns:
+        A populated :class:`~validation.types.ProfileIdMetrics`.
+    """
+    labels = sorted({p for pair in pairs for p in pair})
+    confusion: Dict[str, Dict[str, int]] = {t: {p: 0 for p in labels} for t in labels}
+    correct = 0
+    for truth, pred in pairs:
+        confusion[truth][pred] += 1
+        if truth == pred:
+            correct += 1
+    accuracy = correct / len(pairs) if pairs else 0.0
+    acc_by_snr: Dict[float, float] = {}
+    if snr_by_pair is not None:
+        buckets: Dict[float, List[int]] = {}
+        for (truth, pred), snr in zip(pairs, snr_by_pair):
+            buckets.setdefault(round(snr, 1), []).append(int(truth == pred))
+        acc_by_snr = {k: float(np.mean(v)) for k, v in sorted(buckets.items())}
+    return ProfileIdMetrics(
+        accuracy=accuracy, confusion=confusion, accuracy_by_snr=acc_by_snr
     )
 
 

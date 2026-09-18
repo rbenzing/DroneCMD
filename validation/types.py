@@ -71,6 +71,14 @@ class ClassificationMetrics:
 
 
 @dataclass
+class ProfileIdMetrics:
+    accuracy: float
+    confusion: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    accuracy_by_snr: Dict[float, float] = field(default_factory=dict)
+    ci: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+
+
+@dataclass
 class RunManifest:
     seed: int
     dataset_hash: str
@@ -86,3 +94,4 @@ class RunResult:
     detection: DetectionMetrics
     classification: ClassificationMetrics
     manifest: RunManifest
+    profile_id: Optional[ProfileIdMetrics] = None
