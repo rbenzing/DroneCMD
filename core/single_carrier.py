@@ -493,6 +493,39 @@ def sc_strip_pilots(symbols: Complex, pilot_spacing: int) -> Complex:
     return payload
 
 
+def sc_pilot_correct(symbols: Complex, pilot_spacing: int) -> Complex:
+    """Correct residual phase in an interleaved stream using known pilots.
+
+    The pilots (a fixed BPSK `+1`, see :data:`PILOT_SYMBOL`) carry the residual
+    channel/CFO phase directly: at each pilot index the phase error is
+    ``angle(received_pilot)``. This unwraps those pilot-phase samples, linearly
+    interpolates (and edge-holds) the correction across every symbol index, and
+    derotates the whole stream. The caller then strips the pilots
+    (:func:`sc_strip_pilots`) and demaps the payload.
+
+    Args:
+        symbols: Interleaved payload + pilot symbols at symbol centers
+            (``complex128``).
+        pilot_spacing: Payload symbols between pilots. ``<= 0`` returns
+            ``symbols`` unchanged (no pilots to key off).
+
+    Returns:
+        The phase-corrected interleaved stream (``complex128``), same length.
+    """
+    data = np.asarray(symbols, dtype=np.complex128)
+    if pilot_spacing <= 0 or data.size == 0:
+        return data
+    pilots = sc_pilot_positions(data.size, pilot_spacing)
+    if pilots.size == 0:
+        return data
+    pilot_phase = np.unwrap(np.angle(data[pilots]))
+    all_idx = np.arange(data.size)
+    # np.interp holds the endpoint values beyond the first/last pilot.
+    interp_phase = np.interp(all_idx, pilots.astype(np.float64), pilot_phase)
+    corrected: Complex = data * np.exp(-1j * interp_phase)
+    return corrected
+
+
 def sc_estimate_cfo_psk(rx_preamble: Complex, sps: int) -> float:
     """Estimate normalized carrier frequency offset from the split preamble.
 
@@ -582,6 +615,7 @@ def sc_demodulate_psk(
     *,
     bits_per_symbol: int,
     differential: bool,
+    pilot_spacing: int = 0,
 ) -> Bits:
     """Full coherent/differential PSK receiver: sync, CFO, demap.
 
@@ -617,6 +651,11 @@ def sc_demodulate_psk(
         differential: If True, decode differentially encoded symbols
             (phase-ambiguity-tolerant); if False, decode coherently using
             the preamble's absolute-phase reference.
+        pilot_spacing: Coherent PSK only -- if > 0, use pilot-aided phase
+            tracking (interpolate residual phase across the known pilots,
+            :func:`sc_pilot_correct`, then strip them) instead of the
+            decision-directed loop. Ignored when ``differential`` is True.
+            Default 0 selects the decision-directed (pilotless) path.
 
     Returns:
         Recovered payload bits as ``uint8``. Empty array if the preamble
@@ -661,10 +700,15 @@ def sc_demodulate_psk(
 
     aligned = payload * np.exp(-1j * np.angle(peak2))
     centers = aligned[profile.sps // 2 :: profile.sps]
-    tracked = sc_track_phase_dd(
-        centers, bits_per_symbol=bits_per_symbol, alpha=SC_DD_ALPHA
-    )
-    bits = sc_demap_psk(tracked, bits_per_symbol)
+    if pilot_spacing > 0:
+        corrected = sc_pilot_correct(centers, pilot_spacing)
+        payload_syms = sc_strip_pilots(corrected, pilot_spacing)
+        bits = sc_demap_psk(payload_syms, bits_per_symbol)
+    else:
+        tracked = sc_track_phase_dd(
+            centers, bits_per_symbol=bits_per_symbol, alpha=SC_DD_ALPHA
+        )
+        bits = sc_demap_psk(tracked, bits_per_symbol)
     return bits
 
 

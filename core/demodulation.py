@@ -169,6 +169,11 @@ class DemodConfig:
             single-carrier receiver's payload differentially (phase-
             ambiguity-tolerant) via ``core.single_carrier.sc_demodulate_psk``
             instead of coherently. Ignored by FSK/GFSK and OFDM.
+        pilot_spacing: PSK/BPSK/QPSK coherent scheme only -- if > 0, decode
+            with pilot-aided phase tracking (the payload must have been
+            modulated with the same ``pilot_spacing``). Ignored when
+            ``differential`` is True and by FSK/GFSK/OFDM. Default 0
+            (pilotless, decision-directed).
     """
 
     scheme: ModulationScheme = ModulationScheme.OOK
@@ -191,6 +196,7 @@ class DemodConfig:
     ofdm_fft_size: int = 64
     ofdm_cp_len: int = 16
     differential: bool = False
+    pilot_spacing: int = 0
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -886,6 +892,7 @@ class PSKDemodulator(BaseDemodulator):
                 DEFAULT_SC_PROFILE,
                 bits_per_symbol=bits_per_symbol,
                 differential=self.config.differential,
+                pilot_spacing=self.config.pilot_spacing,
             )
             result.bits = bits.astype(np.uint8)
 

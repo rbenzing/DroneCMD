@@ -723,3 +723,56 @@ def test_pilot_spacing_zero_is_identity() -> None:
     payload = (np.arange(1, 20) + 0j).astype(np.complex128)
     assert np.array_equal(sc_insert_pilots(payload, 0), payload)
     assert np.array_equal(sc_strip_pilots(payload, 0), payload)
+
+
+def _psk_burst_pilots(bits, bps, pilot_spacing):
+    from core.single_carrier import (
+        DEFAULT_SC_PROFILE,
+        preamble_wave_psk,
+        sc_insert_pilots,
+        sc_map_psk,
+    )
+
+    p = DEFAULT_SC_PROFILE
+    pre = preamble_wave_psk(p)
+    symbols = sc_map_psk(np.asarray(bits, dtype=np.uint8), bps)
+    symbols = sc_insert_pilots(symbols, pilot_spacing)
+    pay = np.repeat(symbols, p.sps)
+    return np.concatenate([pre, pay]).astype(np.complex128)
+
+
+def test_pilot_aided_qpsk_roundtrip() -> None:
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(DATA)
+    rx = _psk_burst_pilots(b, bps=2, pilot_spacing=8)
+    rec = sc_demodulate_psk(
+        rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False, pilot_spacing=8
+    )
+    assert np.array_equal(rec[: len(b)], b)
+
+
+def test_pilot_aided_tracks_drift() -> None:
+    # Pilot interpolation removes a slow phase ramp across the payload.
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(DATA)
+    rx = _psk_burst_pilots(b, bps=2, pilot_spacing=8)
+    rx = rx * np.exp(1j * np.linspace(0.0, 0.8, len(rx)))  # slow drift
+    rec = sc_demodulate_psk(
+        rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False, pilot_spacing=8
+    )
+    assert np.array_equal(rec[: len(b)], b)
+
+
+def test_pilot_spacing_zero_matches_pe_path() -> None:
+    # pilot_spacing=0 must be byte-for-byte the PE pilotless (DD) path.
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=2, differential=False).astype(np.complex128)
+    a = sc_demodulate_psk(rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False)
+    c = sc_demodulate_psk(
+        rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False, pilot_spacing=0
+    )
+    assert np.array_equal(a, c)
