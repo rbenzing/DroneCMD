@@ -19,12 +19,14 @@ from typing import Dict, List
 
 import numpy as np
 
+from core.coding import CODING_CATALOG
 from core.profiles import (
     DEFAULT_SC_PROFILE_NAME,
     OFDM_CATALOG,
     SC_CATALOG,
     Family,
     SCMod,
+    coding_of,
     family_of,
 )
 from validation.repro import rng
@@ -147,6 +149,8 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
     captures: List[LabeledCapture] = []
     for proto in spec.protocols:
         name = _resolve_profile_name(spec, proto)
+        c = coding_of(name)
+        coding_spec = CODING_CATALOG[c] if c else None
         if family_of(name) == Family.OFDM:
             scheme = ModScheme.OFDM
         else:
@@ -159,7 +163,10 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                 ).tobytes()
                 if scheme == ModScheme.OFDM:
                     clean = modulate(
-                        payload, ModScheme.OFDM, ofdm_profile=OFDM_CATALOG[name]
+                        payload,
+                        ModScheme.OFDM,
+                        ofdm_profile=OFDM_CATALOG[name],
+                        coding=coding_spec,
                     )
                 else:
                     clean = modulate(
@@ -170,6 +177,7 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                         bt=entry.profile.bt,
                         differential=spec.differential,
                         pilot_spacing=spec.pilot_spacing,
+                        coding=coding_spec,
                     )
                 noisy_pkt, noise_std, achieved = add_awgn_at_snr(clean, snr, g)
                 pre = _noise(spec.guard, noise_std, g)
@@ -193,6 +201,7 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                             "seed": spec.seed,
                             "differential": spec.differential,
                             "pilot_spacing": spec.pilot_spacing,
+                            "coding": c or "uncoded",
                         },
                     )
                 )

@@ -142,3 +142,18 @@ def test_build_scenario_ofdm_profile_provenance() -> None:
     wide_span = wide_truth[1] - wide_truth[0]
     narrow_span = narrow_truth[1] - narrow_truth[0]
     assert wide_span != narrow_span
+
+
+def test_build_scenario_records_coding_provenance() -> None:
+    from validation import create_synth_dataset
+
+    ds = create_synth_dataset(
+        protocols=["c", "u"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        profile_by_protocol={"c": "rep_bpsk", "u": "sik_gfsk"},
+        seed=4,
+    )
+    by_proto = {cap.provenance["protocol"]: cap.provenance for cap in ds}
+    assert by_proto["c"]["coding"] == "rep3"
+    assert by_proto["u"]["coding"] == "uncoded"

@@ -22,6 +22,7 @@ from scipy.ndimage import gaussian_filter1d
 from validation.types import IQSamples, ModScheme
 
 if TYPE_CHECKING:
+    from core.coding import CodingSpec
     from core.ofdm import OFDMProfile
     from core.single_carrier import SCProfile
 
@@ -121,6 +122,7 @@ def modulate(
     differential: bool = False,
     pilot_spacing: int = 0,
     ofdm_profile: "Optional[OFDMProfile]" = None,
+    coding: "Optional[CodingSpec]" = None,
 ) -> IQSamples:
     """Modulate ``data`` bytes to complex64 IQ, unit average power.
 
@@ -171,6 +173,10 @@ def modulate(
             subcarrier/CP layout. ``None`` (default) uses
             ``core.ofdm.DEFAULT_OFDM_PROFILE``, reproducing today's OFDM
             output exactly. Ignored for FSK/GFSK/BPSK/QPSK.
+        coding: If set, applies ``frame_with_crc -> codec.encode ->
+            interleave`` (:mod:`core.coding`) to the payload bits before
+            symbol mapping. ``None`` (default) reproduces today's output
+            exactly.
 
     Returns:
         Unit-average-power IQ samples as ``complex64``. For FSK/GFSK/BPSK/
@@ -188,6 +194,17 @@ def modulate(
     if len(data) == 0:
         return np.zeros(0, dtype=np.complex64)
     bits = _bits_from_bytes(data)
+    if coding is not None:
+        from core.coding import (
+            CODING_INTERLEAVE_DEPTH,
+            frame_with_crc,
+            interleave,
+            make_codec,
+        )
+
+        frame = frame_with_crc(bits.astype(np.uint8))
+        coded = make_codec(coding).encode(frame)
+        bits = interleave(coded, CODING_INTERLEAVE_DEPTH).astype(np.float64)
     iq: npt.NDArray[np.complex128]
     if scheme == ModScheme.OFDM:
         iq = _ofdm(bits, ofdm_profile)

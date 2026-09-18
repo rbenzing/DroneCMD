@@ -211,3 +211,18 @@ def test_modulate_ofdm_default_profile_backcompat() -> None:
     a = modulate(payload, ModScheme.OFDM)
     b = modulate(payload, ModScheme.OFDM, ofdm_profile=DEFAULT_OFDM_PROFILE)
     assert np.array_equal(a, b)
+
+
+def test_modulate_coding_expands_and_backcompat() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(12))
+    unc = modulate(payload, ModScheme.BPSK, sps=16)
+    cod = modulate(payload, ModScheme.BPSK, sps=16, coding=CODING_CATALOG["rep3"])
+    assert cod.size > 2 * unc.size  # ~3x payload symbols (rep3) + CRC
+    # back-compat: default None == today's output exactly
+    assert np.array_equal(unc, modulate(payload, ModScheme.BPSK, sps=16, coding=None))
