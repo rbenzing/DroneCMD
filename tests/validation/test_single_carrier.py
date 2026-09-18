@@ -836,3 +836,42 @@ def test_coherent_qpsk_ber_monotonic_across_snr() -> None:
     for lo, hi in zip(mean_ber, mean_ber[1:]):
         assert hi <= lo + 0.02
     assert mean_ber[-1] == 0.0
+
+
+def test_sc_soft_bits_sign_consistent_and_scales_with_snr() -> None:
+    import numpy as np
+
+    from core.single_carrier import (
+        SCProfile,
+        sc_aligned_payload_centers,
+        sc_demap_psk,
+        sc_soft_bits,
+    )
+    from validation.repro import rng
+    from validation.synth.channel import add_awgn_at_snr
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    prof = SCProfile(sps=16)
+    clean = modulate(bytes(range(24)), ModScheme.BPSK, sps=16).astype(np.complex128)
+    hi, _, _ = add_awgn_at_snr(clean, 30.0, rng(2))
+    llr = sc_soft_bits(hi.astype(np.complex128), prof, bits_per_symbol=1)
+    centers = sc_aligned_payload_centers(hi.astype(np.complex128), prof)
+    assert llr.size == centers.size
+    assert np.array_equal((llr < 0).astype(np.uint8), sc_demap_psk(centers, 1))
+    lo, _, _ = add_awgn_at_snr(clean, 8.0, rng(2))
+    llr_lo = sc_soft_bits(lo.astype(np.complex128), prof, bits_per_symbol=1)
+    assert np.mean(np.abs(llr)) > np.mean(np.abs(llr_lo))  # |LLR| grows with SNR
+
+
+def test_sc_soft_bits_empty_on_noise() -> None:
+    import numpy as np
+
+    from core.single_carrier import SCProfile, sc_soft_bits
+    from validation.repro import rng
+
+    g = rng(3)
+    noise = (g.standard_normal(2000) + 1j * g.standard_normal(2000)).astype(
+        np.complex128
+    )
+    assert sc_soft_bits(noise, SCProfile(sps=16), bits_per_symbol=1).size == 0

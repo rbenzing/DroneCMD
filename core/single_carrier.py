@@ -35,6 +35,7 @@ from scipy.ndimage import gaussian_filter1d
 Complex = npt.NDArray[np.complex128]
 Real = npt.NDArray[np.float64]
 Bits = npt.NDArray[np.uint8]
+LLRs = npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True)
@@ -768,6 +769,77 @@ def sc_aligned_payload_centers(rx: Complex, profile: SCProfile) -> Complex:
     aligned = payload * np.exp(-1j * np.angle(peak2))
     centers: Complex = aligned[profile.sps // 2 :: profile.sps]
     return centers
+
+
+def _sc_noise_var(centers: Complex, ideal: Complex) -> float:
+    """Noise variance estimate from the EVM of aligned centers vs. ideal points.
+
+    Args:
+        centers: Aligned payload symbol-center samples (``complex128``).
+        ideal: Per-symbol hard-decision constellation points (``complex128``),
+            same length as ``centers``.
+
+    Returns:
+        Mean squared error-vector magnitude, floored at ``1e-6`` to keep
+        downstream LLR scaling finite when the burst is (near-)noiseless.
+    """
+    return max(float(np.mean(np.abs(centers - ideal) ** 2)), 1e-6)
+
+
+def sc_soft_bits(
+    rx: Complex,
+    profile: SCProfile,
+    *,
+    bits_per_symbol: int,
+    noise_var: "float | None" = None,
+) -> LLRs:
+    """Per-bit LLRs (L>0 => bit 0) for a coherent PSK payload; empty on no-lock.
+
+    Reuses :func:`sc_aligned_payload_centers` (the same acquisition/CFO/phase
+    front matter as :func:`sc_demodulate_psk`, stopping before
+    decision-directed tracking and hard demapping). BPSK produces one LLR per
+    symbol from the real rail; QPSK produces two LLRs per symbol (even index
+    = I rail = ``bits[0::2]``, odd index = Q rail = ``bits[1::2]``), matching
+    :func:`sc_map_psk`/:func:`sc_demap_psk`'s bit convention. Foundation for
+    soft decoders (P3b).
+
+    Args:
+        rx: Received IQ samples (``complex128`` or castable).
+        profile: Single-carrier PHY parameters (uses ``sps``).
+        bits_per_symbol: ``1`` for BPSK or ``2`` for QPSK.
+        noise_var: Per-symbol noise variance to scale the LLRs by. If
+            ``None`` (default), estimated from the EVM between the aligned
+            centers and their nearest hard-decision constellation points
+            (:func:`_sc_noise_var`).
+
+    Returns:
+        Per-coded-bit LLRs as ``float64``, positive => bit 0 (matching
+        :func:`sc_demap_psk`'s ``real > 0`` / ``imag > 0`` => bit 0
+        convention). Empty if the preamble does not lock.
+
+    Raises:
+        ValueError: If ``bits_per_symbol`` is not 1 or 2.
+    """
+    centers = sc_aligned_payload_centers(np.asarray(rx, dtype=np.complex128), profile)
+    if centers.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if bits_per_symbol == 1:
+        ideal = np.where(centers.real >= 0.0, 1.0, -1.0).astype(np.complex128)
+        nv = _sc_noise_var(centers, ideal) if noise_var is None else noise_var
+        llr: LLRs = (2.0 * centers.real / nv).astype(np.float64)
+        return llr
+    if bits_per_symbol == 2:
+        ideal = (
+            np.where(centers.real >= 0.0, 1.0, -1.0)
+            + 1j * np.where(centers.imag >= 0.0, 1.0, -1.0)
+        ) / np.sqrt(2.0)
+        nv = _sc_noise_var(centers, ideal) if noise_var is None else noise_var
+        scale = 2.0 * np.sqrt(2.0) / nv
+        out = np.empty(2 * centers.size, dtype=np.float64)
+        out[0::2] = scale * centers.real
+        out[1::2] = scale * centers.imag
+        return out
+    raise ValueError(f"unsupported bits_per_symbol: {bits_per_symbol}")
 
 
 def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
