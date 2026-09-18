@@ -125,7 +125,17 @@ def classify_family(
 # judged QPSK (both rails filled) rather than BPSK (Q ~ 0). The Barker
 # preamble is always BPSK, so acquisition cannot separate BPSK from QPSK at
 # the same sps -- this post-alignment test does.
-QPSK_QRAIL_THRESHOLD = 0.5
+#
+# The discriminator is strongly asymmetric: QPSK's ratio stays >= 0.81 even
+# at 8 dB SNR, while a noisy BPSK burst's ratio climbs from ~0 toward 0.5+
+# as SNR drops. A 0.5 threshold therefore lets a BPSK burst blindly resolve
+# to qpsk_link and return silent wrong bits in the normal-SNR band (measured
+# BPSK->QPSK confusion: nonzero from ~11 dB down, e.g. 6/40 @10 dB, 7/40
+# @8 dB at 0.5). Raising the threshold to 0.7 -- the top of the sanctioned
+# [0.3, 0.7] latitude -- keeps QPSK safe (its ratio never approaches 0.7)
+# while pushing BPSK->QPSK confusion out of the normal-SNR band (measured
+# clean, 0/40, at 10 dB and above at 0.7).
+QPSK_QRAIL_THRESHOLD = 0.7
 
 
 def _sc_ref(spec: SCProfileSpec) -> Complex:

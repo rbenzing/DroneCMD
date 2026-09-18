@@ -79,3 +79,88 @@ def test_aligned_centers_separate_bpsk_qpsk() -> None:
     )
     assert bpsk_ratio < 0.3
     assert qpsk_ratio > 0.7
+
+
+def test_bpsk_not_confused_as_qpsk_at_normal_snr() -> None:
+    # Regression pin for QPSK_QRAIL_THRESHOLD (whole-branch review, BLOCKING):
+    # a BPSK burst mis-resolved to qpsk_link returns SILENT wrong bits. The
+    # Q-rail discriminator is asymmetric, so at 0.7 BPSK->QPSK confusion is
+    # pushed out of the normal-SNR band.
+    from core.blind import resolve_sc_profile
+    from validation.repro import rng as make_rng
+    from validation.synth.channel import add_awgn_at_snr
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    # 10 dB is included (in addition to the 12 dB floor) because empirically
+    # (measured below) 12 dB alone is already clean even at the buggy 0.5
+    # threshold on this codebase's synth defaults -- 10 dB is where the
+    # pre-fix/post-fix contrast actually shows up, so it is the SNR point
+    # that makes this a genuine regression pin rather than a vacuous check.
+    tx = modulate(bytes(range(24)), ModScheme.BPSK, sps=8).astype(np.complex64)
+    for snr in (25.0, 20.0, 15.0, 12.0, 10.0):
+        confusions = 0
+        for seed in range(20):
+            noisy, _, _ = add_awgn_at_snr(tx, snr, make_rng(seed))
+            spec, _ = resolve_sc_profile(noisy.astype(np.complex128))
+            if spec is not None and spec.name == "qpsk_link":
+                confusions += 1
+        assert confusions == 0, f"BPSK->QPSK at {snr} dB: {confusions}/20"
+
+
+def test_qpsk_not_confused_as_bpsk_across_snr() -> None:
+    # The asymmetric fix must not cost QPSK: qpsk_link never resolves to psk_c2.
+    from core.blind import resolve_sc_profile
+    from validation.repro import rng as make_rng
+    from validation.synth.channel import add_awgn_at_snr
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    tx = modulate(bytes(range(24)), ModScheme.QPSK, sps=8).astype(np.complex64)
+    for snr in (25.0, 20.0, 15.0, 12.0):
+        for seed in range(20):
+            noisy, _, _ = add_awgn_at_snr(tx, snr, make_rng(seed))
+            spec, _ = resolve_sc_profile(noisy.astype(np.complex128))
+            if spec is not None:
+                assert spec.name != "psk_c2", f"QPSK->BPSK at {snr} dB seed {seed}"
+
+
+def test_profile_id_accuracy_degrades_gracefully() -> None:
+    # Characterize blind profile-ID across SNR (the spec's "characterized
+    # across SNR" -- the coverage gap the whole-branch review flagged).
+    from core.blind import resolve_sc_profile
+    from core.profiles import SC_CATALOG
+    from validation.repro import rng as make_rng
+    from validation.synth.channel import add_awgn_at_snr
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    scheme = {
+        "sik_gfsk": ModScheme.GFSK,
+        "ble_1m": ModScheme.GFSK,
+        "ble_2m": ModScheme.GFSK,
+        "fsk_basic": ModScheme.FSK,
+        "psk_c2": ModScheme.BPSK,
+        "qpsk_link": ModScheme.QPSK,
+    }
+    acc = {}
+    for snr in (25.0, 15.0):
+        correct = total = 0
+        for name, sp in SC_CATALOG.items():
+            p = sp.profile
+            tx = modulate(
+                bytes(range(24)),
+                scheme[name],
+                sps=p.sps,
+                mod_index=p.mod_index,
+                bt=p.bt,
+            ).astype(np.complex64)
+            for seed in range(10):
+                noisy, _, _ = add_awgn_at_snr(tx, snr, make_rng(seed))
+                spec, _ = resolve_sc_profile(noisy.astype(np.complex128))
+                total += 1
+                if spec is not None and spec.name == name:
+                    correct += 1
+        acc[snr] = correct / total
+    assert acc[25.0] >= 0.9  # strong SNR: near-perfect blind profile-ID
+    assert acc[15.0] <= acc[25.0]  # graceful (non-increasing) degradation
