@@ -233,5 +233,7 @@ def test_ofdm_equalized_symbols_roundtrip_and_empty() -> None:
     out = demodulate_ofdm(rx, DEFAULT_OFDM_PROFILE)
     assert np.array_equal(out[: len(b)], b)  # noiseless round-trip preserved
     # Too short for STF+LTF -> empty (guards all early-return paths).
-    empty = ofdm_equalized_symbols(np.zeros(4, dtype=np.complex128), DEFAULT_OFDM_PROFILE)
+    empty = ofdm_equalized_symbols(
+        np.zeros(4, dtype=np.complex128), DEFAULT_OFDM_PROFILE
+    )
     assert empty.size == 0 and empty.dtype == np.complex128
