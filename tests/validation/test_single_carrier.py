@@ -616,3 +616,30 @@ def test_acquire_gates_out_noise() -> None:
     _, _, peak = sc_acquire(noise, ref, p.sps)
     # Wider search (many CFO hypotheses) must not manufacture a false lock.
     assert abs(peak) < SC_SYNC_THRESHOLD
+
+
+def test_psk_wide_cfo_acquire() -> None:
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(DATA)
+    for differential in (False, True):
+        rx = _psk_burst(b, bps=2, differential=differential).astype(np.complex128)
+        n = np.arange(len(rx))
+        # ~0.015 cyc/sample: ~5x beyond PE's ~0.0029 ceiling, inside SC_CFO_RANGE.
+        rx = rx * np.exp(1j * 2 * np.pi * 0.015 * n)
+        rec = sc_demodulate_psk(
+            rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=differential
+        )
+        assert np.array_equal(rec[: len(b)], b)
+
+
+def test_fsk_wide_cfo_acquire() -> None:
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_fsk
+
+    b = _bits(DATA)
+    for gfsk in (False, True):
+        rx = _fsk_burst(b, gfsk=gfsk).astype(np.complex128)
+        n = np.arange(len(rx))
+        rx = rx * np.exp(1j * 2 * np.pi * 0.015 * n)
+        rec = sc_demodulate_fsk(rx, DEFAULT_SC_PROFILE, gfsk=gfsk)
+        assert np.array_equal(rec[: len(b)], b)

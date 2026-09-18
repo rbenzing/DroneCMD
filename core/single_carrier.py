@@ -445,10 +445,12 @@ def sc_demodulate_psk(
 
     Pipeline:
 
-    1. Locate the preamble via :func:`sc_frame_sync`; bail out (empty
-       result) if the lock confidence is below `SC_SYNC_THRESHOLD`.
-    2. Estimate CFO from the preamble (:func:`sc_estimate_cfo_psk`) and
-       derotate the entire received signal.
+    1. Locate the preamble and a coarse CFO via :func:`sc_acquire` (a
+       CFO-hypothesis grid search); bail out (empty result) if the lock
+       confidence is below `SC_SYNC_THRESHOLD`.
+    2. Coarse-derotate the entire received signal by the acquired CFO, then
+       refine the residual CFO from the coarse-corrected preamble
+       (:func:`sc_estimate_cfo_psk`) and derotate again.
     3. Re-run the matched filter on the derotated signal (small window
        around the already-known start) to get a clean post-CFO phase
        reference.
@@ -481,13 +483,16 @@ def sc_demodulate_psk(
     signal = np.asarray(rx, dtype=np.complex128)
     ref = preamble_wave_psk(profile)
 
-    start, peak = sc_frame_sync(signal, ref, search_span=profile.sps * 40)
+    start, coarse_cfo, peak = sc_acquire(signal, ref, profile.sps)
     if abs(peak) < SC_SYNC_THRESHOLD:
         return np.array([], dtype=np.uint8)
 
-    cfo = sc_estimate_cfo_psk(signal[start : start + len(ref)], profile.sps)
     n = np.arange(signal.size)
-    derotated: Complex = signal * np.exp(-1j * 2 * np.pi * cfo * n)
+    coarse: Complex = signal * np.exp(-1j * 2 * np.pi * coarse_cfo * n)
+    # Refine the residual CFO from the two preamble halves on the
+    # coarse-corrected signal (residual is < SC_CFO_STEP/2, inside range).
+    resid_cfo = sc_estimate_cfo_psk(coarse[start : start + len(ref)], profile.sps)
+    derotated: Complex = coarse * np.exp(-1j * 2 * np.pi * resid_cfo * n)
 
     resync_span = max(2 * profile.sps, 1)
     _, peak2 = sc_frame_sync(derotated[start:], ref, search_span=resync_span)
@@ -523,8 +528,10 @@ def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
 
     Pipeline:
 
-    1. Locate the preamble via :func:`sc_frame_sync`; bail out (empty
-       result) if the lock confidence is below `SC_SYNC_THRESHOLD`.
+    1. Locate the preamble and a coarse CFO via :func:`sc_acquire` (a
+       CFO-hypothesis grid search); bail out (empty result) if the lock
+       confidence is below `SC_SYNC_THRESHOLD`. Coarse-derotate the entire
+       received signal by the acquired CFO before slicing out the payload.
     2. Recover instantaneous frequency from the payload by differentiating
        the unwrapped instantaneous phase (an FM discriminator) -- the same
        technique the synthetic ``_fsk`` modulator uses, so transmit and
@@ -560,11 +567,13 @@ def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
     signal = np.asarray(rx, dtype=np.complex128)
     ref = preamble_wave_fsk(profile, gfsk=gfsk)
 
-    start, peak = sc_frame_sync(signal, ref, search_span=profile.sps * 40)
+    start, coarse_cfo, peak = sc_acquire(signal, ref, profile.sps)
     if abs(peak) < SC_SYNC_THRESHOLD:
         return np.array([], dtype=np.uint8)
 
-    payload = signal[start + len(ref) :]
+    n = np.arange(signal.size)
+    derotated = signal * np.exp(-1j * 2 * np.pi * coarse_cfo * n)
+    payload = derotated[start + len(ref) :]
     sps = profile.sps
     n_sym = payload.size // sps
     if n_sym <= 0:

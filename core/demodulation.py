@@ -712,17 +712,18 @@ class FSKDemodulator(BaseDemodulator):
         legacy FFT-peak/correlate front end (:meth:`_estimate_fsk_frequencies`
         / :meth:`_fsk_correlate`, left defined but unused -- see
         ``task-5-report.md``). Gates on
-        :func:`core.single_carrier.sc_lock_confidence` before decoding: a
-        region whose preamble isn't reliably found is reported as a sync
-        failure (``is_valid=False``) rather than silently returning wrong
-        bits, mirroring :class:`OFDMDemodulator`.
+        :func:`core.single_carrier.sc_acquire` before decoding: a region
+        whose preamble isn't reliably found (over the same CFO-hypothesis
+        grid the receiver itself searches) is reported as a sync failure
+        (``is_valid=False``) rather than silently returning wrong bits,
+        mirroring :class:`OFDMDemodulator`.
         """
         from core.single_carrier import (
             DEFAULT_SC_PROFILE,
             SC_SYNC_THRESHOLD,
             preamble_wave_fsk,
+            sc_acquire,
             sc_demodulate_fsk,
-            sc_lock_confidence,
         )
 
         start_time = time.time()
@@ -732,9 +733,8 @@ class FSKDemodulator(BaseDemodulator):
             gfsk = self.config.scheme == ModulationScheme.GFSK
             iq_c128 = iq_samples.astype(np.complex128)
             ref = preamble_wave_fsk(DEFAULT_SC_PROFILE, gfsk=gfsk)
-            confidence = sc_lock_confidence(
-                iq_c128, ref, search_span=DEFAULT_SC_PROFILE.sps * 40
-            )
+            _, _, peak = sc_acquire(iq_c128, ref, DEFAULT_SC_PROFILE.sps)
+            confidence = abs(peak)
             if confidence < SC_SYNC_THRESHOLD:
                 result.is_valid = False
                 result.error_message = (
@@ -848,17 +848,18 @@ class PSKDemodulator(BaseDemodulator):
         simplified-Costas-loop front end (:meth:`_carrier_recovery` /
         :meth:`_symbol_timing_recovery`, left defined but unused -- see
         ``task-5-report.md``). Gates on
-        :func:`core.single_carrier.sc_lock_confidence` before decoding: a
-        region whose preamble isn't reliably found is reported as a sync
-        failure (``is_valid=False``) rather than silently returning wrong
-        bits, mirroring :class:`OFDMDemodulator`.
+        :func:`core.single_carrier.sc_acquire` before decoding: a region
+        whose preamble isn't reliably found (over the same CFO-hypothesis
+        grid the receiver itself searches) is reported as a sync failure
+        (``is_valid=False``) rather than silently returning wrong bits,
+        mirroring :class:`OFDMDemodulator`.
         """
         from core.single_carrier import (
             DEFAULT_SC_PROFILE,
             SC_SYNC_THRESHOLD,
             preamble_wave_psk,
+            sc_acquire,
             sc_demodulate_psk,
-            sc_lock_confidence,
         )
 
         start_time = time.time()
@@ -867,9 +868,10 @@ class PSKDemodulator(BaseDemodulator):
         try:
             iq_c128 = iq_samples.astype(np.complex128)
             ref = preamble_wave_psk(DEFAULT_SC_PROFILE)
-            confidence = sc_lock_confidence(
-                iq_c128, ref, search_span=DEFAULT_SC_PROFILE.sps * 40
-            )
+            # CFO-aware gate: match the receiver's own wide acquisition so a
+            # wide-CFO frame the demod CAN decode is not rejected here first.
+            _, _, peak = sc_acquire(iq_c128, ref, DEFAULT_SC_PROFILE.sps)
+            confidence = abs(peak)
             if confidence < SC_SYNC_THRESHOLD:
                 result.is_valid = False
                 result.error_message = (
