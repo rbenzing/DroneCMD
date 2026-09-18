@@ -423,8 +423,8 @@ def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
        result) if the lock confidence is below `SC_SYNC_THRESHOLD`.
     2. Recover instantaneous frequency from the payload by differentiating
        the unwrapped instantaneous phase (an FM discriminator) -- the same
-       technique ``validation.pipeline.region_to_bytes`` and the synthetic
-       ``_fsk`` modulator use, so transmit and receive agree.
+       technique the synthetic ``_fsk`` modulator uses, so transmit and
+       receive agree.
     3. Because FSK/GFSK detection is non-coherent, a fixed zero threshold
        would be biased by any uncompensated carrier frequency offset (CFO)
        or DC-coupled discriminator bias. Instead, threshold adaptively at

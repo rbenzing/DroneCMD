@@ -66,7 +66,7 @@ def test_injectable_detector_is_used() -> None:
 def test_pipeline_routes_ofdm_scheme_to_ofdm_demod(monkeypatch) -> None:
     import validation.pipeline as P
 
-    calls = {"ofdm": 0, "fsk": 0}
+    calls = {"ofdm": 0, "sc": 0}
     monkeypatch.setattr(
         P,
         "ofdm_region_to_bytes",
@@ -74,8 +74,10 @@ def test_pipeline_routes_ofdm_scheme_to_ofdm_demod(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         P,
-        "region_to_bytes",
-        lambda iq, sps=8: (calls.__setitem__("fsk", calls["fsk"] + 1) or b"\x02"),
+        "single_carrier_region_to_bytes",
+        lambda iq, scheme, sample_rate, sps=8, differential=False: (
+            calls.__setitem__("sc", calls["sc"] + 1) or b"\x02"
+        ),
     )
     iq = np.concatenate(
         [
@@ -93,13 +95,13 @@ def test_pipeline_routes_ofdm_scheme_to_ofdm_demod(monkeypatch) -> None:
     P.DetectClassifyPipeline(StubClassifier("ocusync"), threshold=0.2, min_gap=50).run(
         cap
     )
-    assert calls["ofdm"] >= 1 and calls["fsk"] == 0
+    assert calls["ofdm"] >= 1 and calls["sc"] == 0
 
 
-def test_pipeline_non_ofdm_scheme_uses_fsk_path(monkeypatch) -> None:
+def test_pipeline_non_ofdm_scheme_uses_single_carrier_path(monkeypatch) -> None:
     import validation.pipeline as P
 
-    calls = {"ofdm": 0, "fsk": 0}
+    calls = {"ofdm": 0, "sc": 0}
     monkeypatch.setattr(
         P,
         "ofdm_region_to_bytes",
@@ -107,13 +109,15 @@ def test_pipeline_non_ofdm_scheme_uses_fsk_path(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         P,
-        "region_to_bytes",
-        lambda iq, sps=8: (calls.__setitem__("fsk", calls["fsk"] + 1) or b"\x02"),
+        "single_carrier_region_to_bytes",
+        lambda iq, scheme, sample_rate, sps=8, differential=False: (
+            calls.__setitem__("sc", calls["sc"] + 1) or b"\x02"
+        ),
     )
     P.DetectClassifyPipeline(StubClassifier("mavlink"), threshold=0.2, min_gap=100).run(
         _capture_with_burst()  # existing helper; provenance has no "scheme"
     )
-    assert calls["fsk"] >= 1 and calls["ofdm"] == 0
+    assert calls["sc"] >= 1 and calls["ofdm"] == 0
 
 
 def test_pipeline_ofdm_end_to_end_recovers_payload() -> None:
@@ -139,3 +143,67 @@ def test_pipeline_ofdm_end_to_end_recovers_payload() -> None:
     dets = DetectClassifyPipeline(Spy(), threshold=0.05, min_gap=64).run(cap)
     assert len(dets) >= 1
     assert captured["b"][: len(payload)] == payload
+
+
+def _run_single_carrier_e2e(scheme, payload: bytes, differential: bool = False):
+    """Build a synth capture for ``scheme``, run the pipeline, return recovered bytes.
+
+    Guard-pads the burst with silence on both sides so the amplitude detector
+    (constant-modulus preamble + payload) brackets it cleanly.
+    """
+    from validation.synth.modulators import modulate
+
+    pkt = modulate(payload, scheme, differential=differential)
+    iq = np.concatenate([np.zeros(300, np.complex64), pkt, np.zeros(300, np.complex64)])
+    captured: dict = {}
+
+    class Spy:
+        def classify(self, packet_bytes, signal_metrics=None):
+            captured["b"] = packet_bytes
+            return "mavlink"
+
+    cap = LabeledCapture(
+        iq=iq,
+        sample_rate=1e6,
+        truth_regions=[(300, 300 + len(pkt), "mavlink")],
+        provenance={
+            "source": "synth",
+            "scheme": scheme.value,
+            "differential": differential,
+        },
+    )
+    dets = DetectClassifyPipeline(Spy(), threshold=0.05, min_gap=64).run(cap)
+    assert len(dets) >= 1
+    return captured.get("b", b"")
+
+
+def test_pipeline_fsk_end_to_end_recovers_payload() -> None:
+    from validation.types import ModScheme
+
+    payload = bytes(range(16))
+    recovered = _run_single_carrier_e2e(ModScheme.FSK, payload)
+    assert recovered[: len(payload)] == payload
+
+
+def test_pipeline_bpsk_end_to_end_recovers_payload() -> None:
+    from validation.types import ModScheme
+
+    payload = bytes(range(16))
+    recovered = _run_single_carrier_e2e(ModScheme.BPSK, payload)
+    assert recovered[: len(payload)] == payload
+
+
+def test_pipeline_qpsk_end_to_end_recovers_payload() -> None:
+    from validation.types import ModScheme
+
+    payload = bytes(range(16))
+    recovered = _run_single_carrier_e2e(ModScheme.QPSK, payload)
+    assert recovered[: len(payload)] == payload
+
+
+def test_pipeline_differential_qpsk_end_to_end_recovers_payload() -> None:
+    from validation.types import ModScheme
+
+    payload = bytes(range(16))
+    recovered = _run_single_carrier_e2e(ModScheme.QPSK, payload, differential=True)
+    assert recovered[: len(payload)] == payload
