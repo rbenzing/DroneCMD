@@ -144,28 +144,58 @@ def test_psk_survives_cfo() -> None:
     assert float(np.mean(rec[: len(b)] != b)) < 0.02
 
 
-def test_preamble_wave_fsk_self_locks() -> None:
+def test_preamble_wave_fsk_locates_and_discriminates() -> None:
     # Task 1's preamble_wave_fsk had no dedicated regression test (parked
-    # finding from the Task 1 review); Task 3 owns/depends on it, so guard it
-    # here with a cheap self-lock check for both plain FSK and GFSK.
-    from core.single_carrier import DEFAULT_SC_PROFILE, preamble_wave_fsk
+    # finding from the Task 1 review). The original self-lock guard --
+    # `sc_frame_sync(ref, ref, ...)` -- was TAUTOLOGICAL: with rx and
+    # ref_wave the same length there is only one candidate offset
+    # (n_positions=1), and a normalized matched filter scores ~1.0 for ANY
+    # nonzero vector correlated against itself (Cauchy-Schwarz) -- an
+    # unrelated garbage waveform would pass identically, so it could never
+    # catch a regression (sign error, wrong mod_index, ignored gfsk) in
+    # preamble_wave_fsk. This version instead: (1) embeds the preamble at a
+    # known, non-trivial offset inside a padded buffer -- mirroring
+    # `test_frame_sync_finds_known_offset` -- forcing a real multi-position
+    # search so *locating* the true offset actually exercises the waveform;
+    # and (2) adds a content-sensitivity check: correlating that same buffer
+    # against an unrelated waveform (the BPSK preamble, same sample length)
+    # must score clearly lower than correlating it against the true FSK/GFSK
+    # reference, so a wrong/garbage preamble waveform would fail this test.
+    from core.single_carrier import (
+        DEFAULT_SC_PROFILE,
+        preamble_wave_fsk,
+        preamble_wave_psk,
+    )
 
     p = DEFAULT_SC_PROFILE
+    unrelated_ref = preamble_wave_psk(p)
     for gfsk in (False, True):
         ref = preamble_wave_fsk(p, gfsk=gfsk)
-        start, peak = sc_frame_sync(ref, ref, search_span=p.sps * 40)
-        assert start == 0
+        assert len(unrelated_ref) == len(ref)
+        rx = np.concatenate(
+            [
+                np.zeros(37, dtype=np.complex128),
+                ref,
+                np.zeros(50, dtype=np.complex128),
+            ]
+        )
+        start, peak = sc_frame_sync(rx, ref, search_span=200)
+        assert abs(start - 37) <= 1
         assert abs(peak) > 0.9
 
+        _, unrelated_peak = sc_frame_sync(rx, unrelated_ref, search_span=200)
+        assert abs(unrelated_peak) < 0.9
+        assert abs(unrelated_peak) < abs(peak)
 
-def _fsk_payload(bits, sps, mod_index, gfsk):
+
+def _fsk_payload(bits, sps, mod_index, gfsk, bt: float = 0.5):
     # inline mirror of validation.synth.modulators._fsk for test independence
     from scipy.ndimage import gaussian_filter1d
 
     symbols = 2.0 * np.asarray(bits, float) - 1.0
     shape = np.repeat(symbols, sps)
     if gfsk:
-        sigma = sps * np.sqrt(np.log(2)) / (2 * np.pi * 0.5)
+        sigma = sps * np.sqrt(np.log(2)) / (2 * np.pi * bt)
         shape = gaussian_filter1d(shape, sigma=max(sigma, 1e-3), mode="nearest")
     freq = (mod_index / sps) * shape
     phase = 2 * np.pi * np.cumsum(freq)
