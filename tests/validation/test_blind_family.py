@@ -40,12 +40,18 @@ def test_every_sc_profile_classifies_single_carrier() -> None:
 
 
 def test_noise_is_single_carrier_default() -> None:
-    rng = np.random.default_rng(0)
-    noise = (rng.standard_normal(500) + 1j * rng.standard_normal(500)).astype(
-        np.complex128
-    )
-    fam, _ = classify_family(noise)
-    assert fam == Family.SINGLE_CARRIER  # conservative default; SC resolver then gates
+    # Several seeds, not just one: CP-autocorr on pure noise is a statistical
+    # quantity (see core.blind.OFDM_FAMILY_THRESHOLD), so a single seed could
+    # pass by luck. The real invariant is that noise -> single-carrier.
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        noise = (rng.standard_normal(500) + 1j * rng.standard_normal(500)).astype(
+            np.complex128
+        )
+        fam, score = classify_family(noise)
+        assert (
+            fam == Family.SINGLE_CARRIER
+        ), f"seed={seed} misclassified as OFDM (score={score})"
 
 
 def test_classify_family_tags_all_ofdm_fft_sizes() -> None:

@@ -36,7 +36,27 @@ _A = TypeVar("_A", bound=np.generic)
 # normalized CP-metric ~1 at symbol boundaries. This alone is insufficient:
 # the short deterministic single-carrier Barker preamble spuriously self-matches
 # at lag N too, so the OFDM decision ALSO requires high PAPR (below).
-OFDM_FAMILY_THRESHOLD = 0.5
+#
+# Tuned from 0.5 to 0.8 (P2-OFDM T5-fix measurement) after widening the FFT
+# probe to (32, 64, 128): at N=32 the CP window is only 8 samples
+# (cp_ratio=0.25), so the normalized CP-autocorr has high variance and the
+# PAPR co-requirement does NOT help reject noise -- complex-Gaussian noise is
+# itself high-PAPR (max/mean ~ ln(N)); measured noise PAPR was 5.1-9.4 across
+# seeds, always above PAPR_OFDM_THRESHOLD. Noise rejection therefore rests
+# entirely on this CP threshold. Measured (500-sample complex-Gaussian noise
+# regions, `validation.repro.rng` seeds 0-29, max over the 3 FFT sizes): CP
+# score 0.44-0.74. Measured genuine OFDM CP score (all four OFDM_CATALOG
+# profiles, 10 seeds/profile via `add_awgn_at_snr`, 10-30 dB): min 0.88 (worst
+# case `ofdm_nb`, N=32, at 10 dB) rising to >0.99 by 20 dB. 0.8 sits in the
+# resulting gap. As with OFDM_SYNC_THRESHOLD and OFDM_EVM_MAX, this is
+# statistical, not airtight: the noise CP-autocorr is a max-of-3-FFT-sizes
+# order statistic over continuous noise, so its tail grows with more trials
+# (an extended 2000-seed sweep saw noise CP scores up to ~0.89, occasionally
+# exceeding the 10 dB `ofdm_nb` floor) -- an unavoidably rare residual at
+# small FFT sizes, not claimed as a hard guarantee. `resolve_ofdm_profile`'s
+# sync gate + EVM tiebreak is the loud-failure backstop for a region that
+# slips past this gate at normal operating SNR.
+OFDM_FAMILY_THRESHOLD = 0.8
 
 # Peak-to-average power ratio (linear) above which a region MAY be OFDM.
 # Single-carrier here is near-constant-envelope (FSK/GFSK: |y|=1; rect PSK:
