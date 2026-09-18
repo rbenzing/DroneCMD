@@ -181,8 +181,10 @@ class DetectClassifyPipeline:
             :func:`default_detector`.
         threshold: Detection threshold passed through to whichever detector
             is selected.
-        min_gap: Minimum gap (samples) between packets, passed through to
-            whichever detector is selected.
+        min_gap: Minimum detected-region length in samples, passed through
+            to whichever detector is selected; regions shorter than this are
+            dropped (this filters out short spurious regions -- it does not
+            bridge gaps between packets).
         sps: Samples per symbol used by :func:`region_to_bytes` when
             demodulating a region to bytes.
         use_truth_bytes: When ``True``, recover packet bytes from the

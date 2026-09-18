@@ -153,6 +153,38 @@ def test_ofdm_synth_output_power_normalized() -> None:
     assert abs(p - 1.0) < 0.1
 
 
+def test_ofdm_demodulator_rejects_unsynced_region() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+
+    b = _bits(DATA_2SYM)
+    tx = modulate_ofdm(b)
+    g = rng(0)
+    # Scale noise to the burst's own amplitude so this is a realistic
+    # mis-lock (comparable-power interference/lead-in), not silence.
+    noise_scale = float(np.std(np.abs(tx)))
+    noise = noise_scale * (g.standard_normal(200) + 1j * g.standard_normal(200))
+    # STF starts at sample 200 -- well beyond the ~80-sample (symbol_len)
+    # coarse-timing search window, so the receiver never finds the true STF.
+    rx = np.concatenate([noise, tx]).astype(np.complex64)
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
+    res = OFDMDemodulator(cfg).demodulate(rx)
+    assert res.is_valid is False
+    assert res.error_message
+
+
+def test_ofdm_demodulator_rejects_pure_noise() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+
+    g = rng(1)
+    noise = (g.standard_normal(3 * 80) + 1j * g.standard_normal(3 * 80)).astype(
+        np.complex64
+    )
+    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
+    res = OFDMDemodulator(cfg).demodulate(noise)
+    assert res.is_valid is False
+    assert res.error_message
+
+
 def test_create_synth_dataset_ofdm_protocol() -> None:
     from validation import create_synth_dataset
     from validation.types import ModScheme

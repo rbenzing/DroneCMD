@@ -91,7 +91,9 @@ def modulate(
         length is ``n_symbols * sps`` where ``n_symbols = 8 * len(data)`` for
         FSK/GFSK and ``4 * len(data)`` for QPSK. For OFDM, length is the
         2-symbol STF+LTF preamble plus ``n_ofdm_symbols * 80`` data-symbol
-        samples (per the ``core.ofdm`` default profile).
+        samples (per the ``core.ofdm`` default profile), where
+        ``n_ofdm_symbols = ceil(8 * len(data) / 96)`` (96 = the profile's
+        QPSK data bits per OFDM symbol).
 
     Raises:
         ValueError: If ``scheme`` is otherwise unsupported.

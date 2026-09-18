@@ -159,8 +159,12 @@ class DemodConfig:
         snr_estimation_method: Method for SNR estimation
         enable_performance_monitoring: Enable real-time performance metrics
         debug_mode: Enable debug output and intermediate results
-        ofdm_fft_size: OFDM FFT size (subcarrier count N); OFDM scheme only
-        ofdm_cp_len: OFDM cyclic prefix length in samples; OFDM scheme only
+        ofdm_fft_size: OFDM FFT size (subcarrier count N); OFDM scheme only.
+            Informational only in P1: ``OFDMDemodulator`` always decodes
+            against the fixed ``core.ofdm.DEFAULT_OFDM_PROFILE`` regardless
+            of this value. Configurable profiles are a later phase.
+        ofdm_cp_len: OFDM cyclic prefix length in samples; OFDM scheme only.
+            Informational only in P1 -- see ``ofdm_fft_size``.
     """
 
     scheme: ModulationScheme = ModulationScheme.OOK
@@ -960,11 +964,37 @@ class PSKDemodulator(BaseDemodulator):
 
 
 class OFDMDemodulator(BaseDemodulator):
-    """OFDM demodulator (full Schmidl & Cox receiver via :mod:`core.ofdm`)."""
+    """OFDM demodulator (full Schmidl & Cox receiver via :mod:`core.ofdm`).
+
+    Assumes the STF lies within the first ``profile.symbol_len`` samples of
+    the input region -- the OFDM detector's smoothed-envelope region start is
+    within about half a symbol of the true STF, satisfying this bound.
+    ``demodulate()`` gates on :func:`core.ofdm.ofdm_sync_confidence` and
+    reports ``is_valid=False`` with an explanatory ``error_message`` for
+    regions that violate the bound (no reliable lock) instead of returning
+    mis-decoded bits.
+
+    Note:
+        ``config.ofdm_fft_size``/``config.ofdm_cp_len`` are informational
+        only in P1 -- decoding always uses
+        ``core.ofdm.DEFAULT_OFDM_PROFILE``; see :class:`DemodConfig`.
+    """
 
     def demodulate(self, iq_samples: IQSamples) -> DemodulationResult:
-        """Demodulate an OFDM burst to unpacked data bits."""
-        from core.ofdm import DEFAULT_OFDM_PROFILE, demodulate_ofdm
+        """Demodulate an OFDM burst to unpacked data bits.
+
+        Gates on Schmidl & Cox lock confidence before decoding: a region
+        whose STF isn't reliably found within the bounded coarse-timing
+        search window (see :func:`core.ofdm.ofdm_sync_confidence`) is
+        reported as a sync failure (``is_valid=False``) rather than silently
+        returning wrong bits.
+        """
+        from core.ofdm import (
+            DEFAULT_OFDM_PROFILE,
+            OFDM_SYNC_THRESHOLD,
+            demodulate_ofdm,
+            ofdm_sync_confidence,
+        )
 
         start_time = time.time()
         result = DemodulationResult()
@@ -976,7 +1006,16 @@ class OFDMDemodulator(BaseDemodulator):
                     "Signal too short for OFDM (need >= STF + LTF preamble)"
                 )
                 return result
-            bits = demodulate_ofdm(iq_samples.astype(np.complex128), profile)
+            iq_c128 = iq_samples.astype(np.complex128)
+            confidence = ofdm_sync_confidence(iq_c128, profile)
+            if confidence < OFDM_SYNC_THRESHOLD:
+                result.is_valid = False
+                result.error_message = (
+                    f"OFDM sync failed (S&C peak {confidence:.2f} < "
+                    f"{OFDM_SYNC_THRESHOLD})"
+                )
+                return result
+            bits = demodulate_ofdm(iq_c128, profile)
             result.bits = bits.astype(np.uint8)
             result.samples_processed = len(iq_samples)
             result.symbols_decoded = (

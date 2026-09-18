@@ -77,6 +77,13 @@ def _build_default_profile() -> OFDMProfile:
 
 DEFAULT_OFDM_PROFILE = _build_default_profile()
 
+# The normalized Schmidl & Cox metric (see `_sc_metric`) lives in [0, 1] and
+# is ~1 at a true STF lock. A peak below this threshold means the coarse-
+# timing search found no reliable STF -- either noise, or a spurious
+# correlation elsewhere in the payload -- and the recovered bits should not
+# be trusted.
+OFDM_SYNC_THRESHOLD = 0.5
+
 
 def qpsk_map(bits: Bits) -> Complex:
     """Map an even-length bit array to unit-energy QPSK symbols.
@@ -217,6 +224,37 @@ def _sc_metric(rx: Complex, half: int) -> Tuple[npt.NDArray[np.float64], Complex
     return metric, p
 
 
+def ofdm_sync_confidence(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> float:
+    """Report Schmidl & Cox lock confidence for a candidate OFDM region.
+
+    Computes the same normalized S&C metric, over the same bounded search
+    window, as the coarse-timing step of :func:`demodulate_ofdm`. Callers
+    (notably :class:`core.demodulation.OFDMDemodulator`) use this to gate on
+    sync quality *before* trusting bits from :func:`demodulate_ofdm`, since
+    that function always returns its best-effort decode even when the STF
+    was never actually found.
+
+    Args:
+        rx: Complex baseband samples, expected to begin at or near the STF.
+        profile: OFDM PHY profile (subcarrier/CP layout) to search against.
+
+    Returns:
+        The peak normalized S&C metric in ``[0, 1]`` over the first
+        ``profile.symbol_len`` samples (~1.0 at a true STF lock, near 0 for
+        noise or a mis-aligned region). ``0.0`` if ``rx`` is too short for
+        the metric to be computed at all.
+    """
+    half = profile.fft_size // 2
+    x = np.asarray(rx, dtype=np.complex128)
+    metric, _ = _sc_metric(x, half)
+    if metric.size == 0:
+        return 0.0
+    search_span = min(len(metric), profile.symbol_len)
+    return float(np.max(metric[:search_span]))
+
+
 def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) -> Bits:
     """Recover data bits from an OFDM burst with a full S&C receiver.
 
@@ -226,6 +264,15 @@ def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) ->
 
     Returns an unpacked ``uint8`` bit array (empty if the burst is shorter than
     the STF + LTF preamble).
+
+    Note:
+        This function always returns its best-effort decode, even when the
+        STF was never actually found within the bounded coarse-timing search
+        (see the loop below) -- it does not itself signal a sync failure.
+        Callers that cannot guarantee ``rx`` starts at or near the STF (e.g.
+        a detector-supplied region) should gate on
+        :func:`ofdm_sync_confidence` first; see
+        :class:`core.demodulation.OFDMDemodulator`.
     """
     n = profile.fft_size
     slen = profile.symbol_len
@@ -234,7 +281,13 @@ def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) ->
     if len(x) < 2 * slen:
         return np.zeros(0, dtype=np.uint8)
 
-    # 1. Coarse timing = start of the STF *body* (max of the S&C metric).
+    # 1. Coarse timing = argmax of the S&C metric (max of the S&C metric).
+    # The true STF boundary sits within the metric's flat-topped plateau
+    # (the metric stays near-peak for a range of `d` around the exact
+    # boundary), so `d_body` lands somewhere on that plateau rather than
+    # necessarily the exact sample; the residual offset is within the
+    # cyclic prefix and is absorbed by the LTF-based channel estimate below
+    # rather than causing inter-symbol interference.
     # The acquisition search is bounded to one symbol length from the start
     # of the buffer: any real receiver only searches a burst's *known*
     # approximate start for a bounded timing/propagation uncertainty rather
