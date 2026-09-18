@@ -437,9 +437,9 @@ For more information, see the documentation.
         '--use-truth-bytes', action='store_true',
         help=(
             'Score the classifier on ground-truth payload bytes instead of '
-            'demodulated bytes. Without this flag, CLI classification of '
-            'synthetic non-FSK schemes (e.g. QPSK) is demod-limited, since '
-            'region_to_bytes is a fixed FSK demodulator.'
+            'demodulated bytes. FSK/GFSK and OFDM captures demodulate for real; '
+            'QPSK remains demod-limited (its pipeline demod still uses the FSK '
+            'reference), so use this flag to isolate classifier accuracy there.'
         ),
     )
 
@@ -974,7 +974,11 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
             lo, hi, step = (float(x) for x in args.snr.split(':'))
             grid = list(np.arange(lo, hi + step / 2, step))
             protocols = [p.strip() for p in args.protocols.split(',')]
-            default_scheme = {"mavlink": ModScheme.FSK, "dji": ModScheme.QPSK}
+            default_scheme = {
+                "mavlink": ModScheme.FSK,
+                "dji": ModScheme.QPSK,
+                "ocusync": ModScheme.OFDM,
+            }
             scheme_by_protocol = {p: default_scheme.get(p, ModScheme.FSK) for p in protocols}
             ds = create_synth_dataset(
                 protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,

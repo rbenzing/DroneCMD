@@ -151,3 +151,21 @@ def test_ofdm_synth_output_power_normalized() -> None:
     assert iq.dtype == np.complex64
     p = float(np.mean(np.abs(iq) ** 2))
     assert abs(p - 1.0) < 0.1
+
+
+def test_create_synth_dataset_ofdm_protocol() -> None:
+    from validation import create_synth_dataset
+    from validation.types import ModScheme
+
+    ds = create_synth_dataset(
+        protocols=["ocusync"],
+        snr_grid_db=[20.0, 30.0],
+        n_per_cell=2,
+        scheme_by_protocol={"ocusync": ModScheme.OFDM},
+        sample_rate=1e6,
+        seed=1,
+    )
+    assert len(ds) == 4
+    for cap in ds:
+        assert cap.provenance["scheme"] == "ofdm"
+        assert cap.truth_regions is not None and len(cap.truth_regions) == 1
