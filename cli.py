@@ -430,6 +430,11 @@ For more information, see the documentation.
         help='Insert a known pilot every N coherent-PSK payload symbols for '
              'pilot-aided phase tracking (0 = pilotless, the default)',
     )
+    v_synth.add_argument(
+        '--profile', default=None,
+        help='Force one catalog profile for all protocols (overrides the '
+             'per-protocol default), e.g. ble_2m',
+    )
 
     v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
     v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
@@ -988,6 +993,19 @@ def _default_synth_scheme(protocol):
     return known.get(protocol, ModScheme.GFSK)
 
 
+def _default_synth_profile(protocol):
+    """Map a protocol name to its default catalog profile name (GFSK default
+    ``sik_gfsk`` for unknown protocols)."""
+    known = {
+        "mavlink": "sik_gfsk",
+        "ble": "ble_1m",
+        "dji": "qpsk_link",
+        "ocusync": "wifi_20",
+        "bpsk_link": "psk_c2",
+    }
+    return known.get(protocol, "sik_gfsk")
+
+
 def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
     """Handle validate command — synth/ingest datasets or run the T&E harness."""
     import numpy as np
@@ -1002,12 +1020,16 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
             lo, hi, step = (float(x) for x in args.snr.split(':'))
             grid = list(np.arange(lo, hi + step / 2, step))
             protocols = [p.strip() for p in args.protocols.split(',')]
-            scheme_by_protocol = {p: _default_synth_scheme(p) for p in protocols}
+            if args.profile:
+                profile_by_protocol = {p: args.profile for p in protocols}
+            else:
+                profile_by_protocol = {p: _default_synth_profile(p) for p in protocols}
             ds = create_synth_dataset(
                 protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
-                scheme_by_protocol=scheme_by_protocol, seed=args.seed,
+                seed=args.seed,
                 differential=args.differential,
                 pilot_spacing=args.pilot_spacing,
+                profile_by_protocol=profile_by_protocol,
             )
             ds.write(Path(args.out))
             output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")
