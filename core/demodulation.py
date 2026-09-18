@@ -165,6 +165,10 @@ class DemodConfig:
             of this value. Configurable profiles are a later phase.
         ofdm_cp_len: OFDM cyclic prefix length in samples; OFDM scheme only.
             Informational only in P1 -- see ``ofdm_fft_size``.
+        differential: PSK/BPSK/QPSK scheme only -- if True, decode the
+            single-carrier receiver's payload differentially (phase-
+            ambiguity-tolerant) via ``core.single_carrier.sc_demodulate_psk``
+            instead of coherently. Ignored by FSK/GFSK and OFDM.
     """
 
     scheme: ModulationScheme = ModulationScheme.OOK
@@ -186,6 +190,7 @@ class DemodConfig:
     debug_mode: bool = False
     ofdm_fft_size: int = 64
     ofdm_cp_len: int = 16
+    differential: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -700,45 +705,55 @@ class FSKDemodulator(BaseDemodulator):
     """
 
     def demodulate(self, iq_samples: IQSamples) -> DemodulationResult:
-        """Demodulate FSK signal."""
+        """Demodulate FSK/GFSK via the shared single-carrier receiver.
+
+        Delegates to :func:`core.single_carrier.sc_demodulate_fsk` (Barker
+        preamble sync + adaptive-threshold FM discriminator) instead of the
+        legacy FFT-peak/correlate front end (:meth:`_estimate_fsk_frequencies`
+        / :meth:`_fsk_correlate`, left defined but unused -- see
+        ``task-5-report.md``). Gates on
+        :func:`core.single_carrier.sc_lock_confidence` before decoding: a
+        region whose preamble isn't reliably found is reported as a sync
+        failure (``is_valid=False``) rather than silently returning wrong
+        bits, mirroring :class:`OFDMDemodulator`.
+        """
+        from core.single_carrier import (
+            DEFAULT_SC_PROFILE,
+            SC_SYNC_THRESHOLD,
+            preamble_wave_fsk,
+            sc_demodulate_fsk,
+            sc_lock_confidence,
+        )
+
         start_time = time.time()
         result = DemodulationResult()
 
         try:
-            # Preprocess signal
-            processed = self._preprocess_signal(iq_samples)
-
-            # Estimate mark and space frequencies
-            mark_freq, space_freq = self._estimate_fsk_frequencies(processed)
-
-            # Correlate with mark and space reference signals
-            mark_correlation, space_correlation = self._fsk_correlate(
-                processed, mark_freq, space_freq
+            gfsk = self.config.scheme == ModulationScheme.GFSK
+            iq_c128 = iq_samples.astype(np.complex128)
+            ref = preamble_wave_fsk(DEFAULT_SC_PROFILE, gfsk=gfsk)
+            confidence = sc_lock_confidence(
+                iq_c128, ref, search_span=DEFAULT_SC_PROFILE.sps * 40
             )
-
-            # Make decisions
-            decisions = mark_correlation > space_correlation
-            result.bits = decisions.astype(np.uint8)
-
-            # Generate soft decisions
-            if self.config.enable_soft_decisions:
-                result.soft_bits = (mark_correlation - space_correlation).astype(
-                    np.float32
+            if confidence < SC_SYNC_THRESHOLD:
+                result.is_valid = False
+                result.error_message = (
+                    f"FSK sync failed (preamble lock {confidence:.2f} < "
+                    f"{SC_SYNC_THRESHOLD})"
                 )
+                return result
+
+            bits = sc_demodulate_fsk(iq_c128, DEFAULT_SC_PROFILE, gfsk=gfsk)
+            result.bits = bits.astype(np.uint8)
 
             # Estimate quality metrics
             self._estimate_quality_metrics(iq_samples, result)
 
-            # FSK-specific metrics
-            freq_separation = abs(mark_freq - space_freq)
             result.symbols_decoded = len(result.bits)
             result.samples_processed = len(iq_samples)
 
-            # Store additional info in warnings for debug
             if self.config.debug_mode:
-                result.warnings.append(f"Mark freq: {mark_freq:.1f} Hz")
-                result.warnings.append(f"Space freq: {space_freq:.1f} Hz")
-                result.warnings.append(f"Freq separation: {freq_separation:.1f} Hz")
+                result.warnings.append(f"Preamble lock confidence: {confidence:.3f}")
 
             result.is_valid = True
 
@@ -824,71 +839,63 @@ class PSKDemodulator(BaseDemodulator):
     """
 
     def demodulate(self, iq_samples: IQSamples) -> DemodulationResult:
-        """Demodulate PSK signal."""
+        """Demodulate PSK/BPSK/QPSK (coherent or differential) via the
+        shared single-carrier receiver.
+
+        Delegates to :func:`core.single_carrier.sc_demodulate_psk` (Barker
+        preamble sync, CFO estimation/derotation, coherent or differential
+        demapping per ``config.differential``) instead of the legacy
+        simplified-Costas-loop front end (:meth:`_carrier_recovery` /
+        :meth:`_symbol_timing_recovery`, left defined but unused -- see
+        ``task-5-report.md``). Gates on
+        :func:`core.single_carrier.sc_lock_confidence` before decoding: a
+        region whose preamble isn't reliably found is reported as a sync
+        failure (``is_valid=False``) rather than silently returning wrong
+        bits, mirroring :class:`OFDMDemodulator`.
+        """
+        from core.single_carrier import (
+            DEFAULT_SC_PROFILE,
+            SC_SYNC_THRESHOLD,
+            preamble_wave_psk,
+            sc_demodulate_psk,
+            sc_lock_confidence,
+        )
+
         start_time = time.time()
         result = DemodulationResult()
 
         try:
-            # Preprocess signal
-            processed = self._preprocess_signal(iq_samples)
+            iq_c128 = iq_samples.astype(np.complex128)
+            ref = preamble_wave_psk(DEFAULT_SC_PROFILE)
+            confidence = sc_lock_confidence(
+                iq_c128, ref, search_span=DEFAULT_SC_PROFILE.sps * 40
+            )
+            if confidence < SC_SYNC_THRESHOLD:
+                result.is_valid = False
+                result.error_message = (
+                    f"PSK sync failed (preamble lock {confidence:.2f} < "
+                    f"{SC_SYNC_THRESHOLD})"
+                )
+                return result
 
-            # Carrier recovery (simplified)
-            if self.config.enable_carrier_recovery:
-                recovered, phase_offset = self._carrier_recovery(processed)
-                result.phase_offset_deg = np.degrees(phase_offset)
-            else:
-                recovered = processed
-                result.phase_offset_deg = 0.0
-
-            # Symbol timing recovery
-            if self.config.enable_clock_recovery:
-                symbols, timing_offset = self._symbol_timing_recovery(recovered)
-                result.timing_offset_samples = timing_offset
-                result.clock_recovery_locked = True
-            else:
-                # Simple decimation
-                samples_per_symbol = self.config.samples_per_symbol
-                symbols = recovered[samples_per_symbol // 2 :: samples_per_symbol]
-
-            # Store constellation points
-            result.constellation_points = symbols
-
-            # Make decisions based on modulation type
-            if self.config.scheme in (ModulationScheme.PSK, ModulationScheme.BPSK):
-                result.bits = (np.real(symbols) > 0).astype(np.uint8)
-            elif self.config.scheme == ModulationScheme.QPSK:
-                # QPSK: 2 bits per symbol
-                i_bits = (np.real(symbols) > 0).astype(np.uint8)
-                q_bits = (np.imag(symbols) > 0).astype(np.uint8)
-                # Interleave I and Q bits
-                result.bits = np.zeros(len(i_bits) * 2, dtype=np.uint8)
-                result.bits[0::2] = i_bits
-                result.bits[1::2] = q_bits
-
-            # Soft decisions
-            if self.config.enable_soft_decisions:
-                if self.config.scheme == ModulationScheme.QPSK:
-                    soft_i = np.real(symbols).astype(np.float32)
-                    soft_q = np.imag(symbols).astype(np.float32)
-                    result.soft_bits = np.zeros(len(soft_i) * 2, dtype=np.float32)
-                    result.soft_bits[0::2] = soft_i
-                    result.soft_bits[1::2] = soft_q
-                else:
-                    result.soft_bits = np.real(symbols).astype(np.float32)
-
-            # Calculate EVM (Error Vector Magnitude)
-            if len(symbols) > 0:
-                ideal_constellation = self._get_ideal_constellation(symbols)
-                error_vectors = symbols - ideal_constellation
-                evm = np.sqrt(np.mean(np.abs(error_vectors) ** 2))
-                reference_power = np.sqrt(np.mean(np.abs(ideal_constellation) ** 2))
-                result.evm_percent = (evm / reference_power) * 100
+            bits_per_symbol = self.config.scheme.bits_per_symbol
+            bits = sc_demodulate_psk(
+                iq_c128,
+                DEFAULT_SC_PROFILE,
+                bits_per_symbol=bits_per_symbol,
+                differential=self.config.differential,
+            )
+            result.bits = bits.astype(np.uint8)
 
             # Estimate quality metrics
             self._estimate_quality_metrics(iq_samples, result)
 
-            result.symbols_decoded = len(symbols)
+            result.symbols_decoded = len(result.bits) // max(bits_per_symbol, 1)
             result.samples_processed = len(iq_samples)
+
+            if self.config.debug_mode:
+                result.warnings.append(f"Preamble lock confidence: {confidence:.3f}")
+
             result.is_valid = True
 
         except Exception as e:

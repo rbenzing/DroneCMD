@@ -247,3 +247,101 @@ def test_fsk_survives_cfo() -> None:
     rx = rx * np.exp(1j * 2 * np.pi * (0.002) * n)  # constant CFO
     rec = sc_demodulate_fsk(rx, DEFAULT_SC_PROFILE, gfsk=False)
     assert float(np.mean(rec[: len(b)] != b)) < 0.02
+
+
+# --- Task 5: core.demodulation FSK/PSK demodulators delegate to the shared
+# single-carrier receiver above. Reuses the `_psk_burst`/`_fsk_burst` inline
+# helpers (and `DATA`/`_bits`) defined earlier in this module.
+
+
+def test_fsk_demodulator_recovers_bits() -> None:
+    from core.demodulation import DemodConfig, FSKDemodulator, ModulationScheme
+
+    b = _bits(DATA)
+    rx = _fsk_burst(b, gfsk=False).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.FSK)
+    result = FSKDemodulator(config).demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
+
+
+def test_gfsk_demodulator_recovers_bits() -> None:
+    from core.demodulation import DemodConfig, FSKDemodulator, ModulationScheme
+
+    b = _bits(DATA)
+    rx = _fsk_burst(b, gfsk=True).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.GFSK)
+    result = FSKDemodulator(config).demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
+
+
+def test_fsk_demodulator_rejects_unsynced_noise() -> None:
+    from core.demodulation import DemodConfig, FSKDemodulator, ModulationScheme
+
+    rng = np.random.default_rng(1)
+    noise = (rng.standard_normal(400) + 1j * rng.standard_normal(400)).astype(
+        np.complex64
+    )
+    config = DemodConfig(scheme=ModulationScheme.FSK)
+    result = FSKDemodulator(config).demodulate(noise)
+    assert not result.is_valid
+    assert result.error_message
+
+
+def test_psk_demodulator_recovers_qpsk_bits() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, PSKDemodulator
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=2, differential=False).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.QPSK)
+    result = PSKDemodulator(config).demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
+
+
+def test_psk_demodulator_recovers_bpsk_bits() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, PSKDemodulator
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=1, differential=False).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.BPSK)
+    result = PSKDemodulator(config).demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
+
+
+def test_psk_demodulator_differential_qpsk() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, PSKDemodulator
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=2, differential=True).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.QPSK, differential=True)
+    result = PSKDemodulator(config).demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
+
+
+def test_psk_demodulator_rejects_unsynced_noise() -> None:
+    from core.demodulation import DemodConfig, ModulationScheme, PSKDemodulator
+
+    rng = np.random.default_rng(2)
+    noise = (rng.standard_normal(400) + 1j * rng.standard_normal(400)).astype(
+        np.complex64
+    )
+    config = DemodConfig(scheme=ModulationScheme.QPSK)
+    result = PSKDemodulator(config).demodulate(noise)
+    assert not result.is_valid
+    assert result.error_message
+
+
+def test_demodulation_engine_routes_bpsk_to_psk_path() -> None:
+    from core.demodulation import DemodConfig, DemodulationEngine, ModulationScheme
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=1, differential=False).astype(np.complex64)
+    config = DemodConfig(scheme=ModulationScheme.BPSK)
+    engine = DemodulationEngine(config)
+    result = engine.demodulate(rx)
+    assert result.is_valid
+    assert np.array_equal(result.bits[: len(b)], b)
