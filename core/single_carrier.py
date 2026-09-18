@@ -734,6 +734,42 @@ def sc_demodulate_psk(
     return bits
 
 
+def sc_aligned_payload_centers(rx: Complex, profile: SCProfile) -> Complex:
+    """Coherently-aligned payload symbol centers (PSK front matter only).
+
+    Runs the same acquisition + two-stage CFO correction + absolute-phase
+    alignment as :func:`sc_demodulate_psk`, then samples the payload symbol
+    centers -- stopping before decision-directed tracking / pilots / demapping.
+    Used by the blind resolver's BPSK-vs-QPSK discriminator (which needs the
+    aligned constellation, not the bits). Returns an empty array if the
+    preamble does not lock.
+
+    Args:
+        rx: Received IQ samples (``complex128`` or castable).
+        profile: The candidate single-carrier profile (uses ``sps``).
+
+    Returns:
+        Aligned payload symbol-center samples (``complex128``); empty if no
+        lock.
+    """
+    signal = np.asarray(rx, dtype=np.complex128)
+    ref = preamble_wave_psk(profile)
+    start, coarse_cfo, peak = sc_acquire(signal, ref, profile.sps)
+    if abs(peak) < SC_SYNC_THRESHOLD:
+        return np.array([], dtype=np.complex128)
+    n = np.arange(signal.size)
+    coarse: Complex = signal * np.exp(-1j * 2 * np.pi * coarse_cfo * n)
+    resid = sc_estimate_cfo_psk(coarse[start : start + len(ref)], profile.sps)
+    derotated: Complex = coarse * np.exp(-1j * 2 * np.pi * resid * n)
+    _, peak2 = sc_frame_sync(
+        derotated[start:], ref, search_span=max(2 * profile.sps, 1)
+    )
+    payload = derotated[start + len(ref) :]
+    aligned = payload * np.exp(-1j * np.angle(peak2))
+    centers: Complex = aligned[profile.sps // 2 :: profile.sps]
+    return centers
+
+
 def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
     """Non-coherent (G)FSK receiver: preamble sync, discriminator, bit slice.
 

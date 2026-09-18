@@ -8,12 +8,19 @@ kept only as ground truth for the profile-ID metric.
 """
 from __future__ import annotations
 
-from typing import Tuple, TypeVar
+from typing import Optional, Tuple, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 
-from core.profiles import Family
+from core.profiles import SC_CATALOG, Family, SCMod, SCProfileSpec
+from core.single_carrier import (
+    SC_SYNC_THRESHOLD,
+    preamble_wave_fsk,
+    preamble_wave_psk,
+    sc_acquire,
+    sc_aligned_payload_centers,
+)
 
 Complex = npt.NDArray[np.complex128]
 _A = TypeVar("_A", bound=np.generic)
@@ -112,3 +119,71 @@ def classify_family(
     is_ofdm = cp_best >= ofdm_threshold and _papr(y) >= papr_threshold
     family = Family.OFDM if is_ofdm else Family.SINGLE_CARRIER
     return family, cp_best
+
+
+# Aligned-payload quadrature-rail energy ratio above which a PSK burst is
+# judged QPSK (both rails filled) rather than BPSK (Q ~ 0). The Barker
+# preamble is always BPSK, so acquisition cannot separate BPSK from QPSK at
+# the same sps -- this post-alignment test does.
+QPSK_QRAIL_THRESHOLD = 0.5
+
+
+def _sc_ref(spec: SCProfileSpec) -> Complex:
+    """Preamble reference waveform for a catalog profile."""
+    if spec.is_fsk:
+        return preamble_wave_fsk(spec.profile, gfsk=spec.gfsk)
+    return preamble_wave_psk(spec.profile)
+
+
+def _psk_qrail_ratio(iq: Complex, spec: SCProfileSpec) -> float:
+    """mean|Q| / mean|I| of the coherently-aligned payload (BPSK~0, QPSK~1)."""
+    centers = sc_aligned_payload_centers(iq, spec.profile)
+    if centers.size == 0:
+        return 0.0
+    num = float(np.mean(np.abs(centers.imag)))
+    den = float(np.mean(np.abs(centers.real))) + 1e-9
+    return num / den
+
+
+def _psk_profile_of_order(mod: SCMod, sps: int) -> Optional[SCProfileSpec]:
+    """The catalog PSK profile of a given order (BPSK/QPSK) and sps, if any."""
+    for spec in SC_CATALOG.values():
+        if spec.mod == mod and spec.profile.sps == sps:
+            return spec
+    return None
+
+
+def resolve_sc_profile(iq: Complex) -> Tuple[Optional[SCProfileSpec], float]:
+    """Blindly resolve a single-carrier region to a catalog profile.
+
+    For each catalog profile, correlates the region against that profile's
+    preamble via the CFO-tolerant :func:`core.single_carrier.sc_acquire` and
+    keeps the highest lock peak. Below :data:`core.single_carrier.
+    SC_SYNC_THRESHOLD` -> no lock (``(None, best)``). PSK profiles that share a
+    preamble (same sps: BPSK and QPSK) tie on acquisition; the winner is then
+    disambiguated by the payload-order discriminator (:func:`_psk_qrail_ratio`).
+
+    Args:
+        iq: Region samples (``complex128`` or castable).
+
+    Returns:
+        ``(spec, confidence)`` -- the resolved profile and its ``abs`` lock
+        peak in ``[0, 1]``; ``(None, best)`` on no lock.
+    """
+    signal = np.asarray(iq, dtype=np.complex128)
+    best_spec: Optional[SCProfileSpec] = None
+    best_peak = 0.0
+    for spec in SC_CATALOG.values():
+        _, _, peak = sc_acquire(signal, _sc_ref(spec), spec.profile.sps)
+        if abs(peak) > best_peak:
+            best_peak = abs(peak)
+            best_spec = spec
+    if best_spec is None or best_peak < SC_SYNC_THRESHOLD:
+        return None, best_peak
+    if best_spec.mod in (SCMod.BPSK, SCMod.QPSK):
+        ratio = _psk_qrail_ratio(signal, best_spec)
+        want = SCMod.QPSK if ratio > QPSK_QRAIL_THRESHOLD else SCMod.BPSK
+        matched = _psk_profile_of_order(want, best_spec.profile.sps)
+        if matched is not None:
+            best_spec = matched
+    return best_spec, best_peak
