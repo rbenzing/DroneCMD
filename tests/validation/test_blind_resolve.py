@@ -167,13 +167,25 @@ def test_profile_id_accuracy_degrades_gracefully() -> None:
 
 
 def _ofdm_noisy(profile_name: str, snr_db: float, seed: int) -> "np.ndarray":
-    """Modulate a fixed payload with a catalog OFDM profile at a target SNR."""
+    """Modulate a fixed payload with a catalog OFDM profile at a target SNR.
+
+    The 12-element bit pattern is repeated 40x (480 bits) rather than 8x (96
+    bits) so every catalog profile carries several data symbols (>=3 even for
+    wifi_40's 220 data-bits/symbol, 5-20+ for the others). A single-symbol
+    burst leaves no margin: a normal S&C timing-search offset at low SNR can
+    push the sole data symbol past the end of the region, making even the
+    correct profile's trial demod return +inf EVM (measured/documented in the
+    Task 3 report and confirmed in Task 4's original BLOCKED report -- a
+    test-fixture fragility, not a resolver defect). With several symbols, a
+    timing-plateau offset costs at most the last symbol and the correct
+    profile still yields a finite, low EVM.
+    """
     from core.ofdm import modulate_ofdm
     from core.profiles import OFDM_CATALOG
     from validation.repro import rng
     from validation.synth.channel import add_awgn_at_snr
 
-    b = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1] * 8, dtype=np.uint8)
+    b = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1] * 40, dtype=np.uint8)
     clean = modulate_ofdm(b, OFDM_CATALOG[profile_name]).astype(np.complex128)
     g = rng(seed)
     noisy, _, _ = add_awgn_at_snr(clean, snr_db, g)
@@ -231,3 +243,71 @@ def test_ofdm_evm_ceiling_rejects_single_carrier() -> None:
     y = gfsk.astype(np.complex128)
     best = min(_ofdm_data_evm(y, p) for p in OFDM_CATALOG.values())
     assert best > OFDM_EVM_MAX
+
+
+def test_resolve_ofdm_self_resolves_each_profile() -> None:
+    from core.blind import resolve_ofdm_profile
+    from core.profiles import OFDM_CATALOG
+
+    for name in OFDM_CATALOG:
+        rx = _ofdm_noisy(name, 30.0, 3)
+        got, conf = resolve_ofdm_profile(rx)
+        assert got == name, f"resolved {got} expected {name}"
+        assert conf >= 0.6
+
+
+def test_resolve_ofdm_rejects_noise() -> None:
+    from core.blind import resolve_ofdm_profile
+    from validation.repro import rng
+
+    g = rng(4)
+    noise = (g.standard_normal(4 * 80) + 1j * g.standard_normal(4 * 80)).astype(
+        np.complex128
+    )
+    got, _ = resolve_ofdm_profile(noise)
+    assert got is None
+
+
+def test_resolve_ofdm_rejects_noncatalog_fft_size() -> None:
+    from core.blind import resolve_ofdm_profile
+    from core.ofdm import OFDMProfile, modulate_ofdm
+
+    # N=16 OFDM burst -- no catalog profile (32/64/128) locks its sync.
+    p16 = OFDMProfile(
+        fft_size=16,
+        cp_len=4,
+        data_carriers=tuple(k for k in range(-6, 7) if k not in (-5, 5) and k != 0),
+        pilot_carriers=(-5, 5),
+        pilot_values=(1 + 0j, 1 + 0j),
+    )
+    rx = modulate_ofdm(np.array([1, 0, 1, 1] * 8, dtype=np.uint8), p16).astype(
+        np.complex128
+    )
+    got, _ = resolve_ofdm_profile(rx)
+    assert got is None
+
+
+def test_resolve_ofdm_rejects_single_carrier_region() -> None:
+    from core.blind import resolve_ofdm_profile
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    gfsk = modulate(bytes(range(48)), ModScheme.GFSK, sps=8, mod_index=0.7, bt=0.5)
+    got, _ = resolve_ofdm_profile(gfsk.astype(np.complex128))
+    assert got is None
+
+
+def test_resolve_ofdm_snr_sweep_accuracy() -> None:
+    """SNR-swept: resolution is accurate across the normal-SNR band."""
+    from core.blind import resolve_ofdm_profile
+    from core.profiles import OFDM_CATALOG
+
+    for snr in (12.0, 20.0, 30.0):
+        correct = 0
+        total = 0
+        for seed, name in enumerate(OFDM_CATALOG):
+            rx = _ofdm_noisy(name, snr, 100 + seed)
+            got, _ = resolve_ofdm_profile(rx)
+            correct += int(got == name)
+            total += 1
+        assert correct == total, f"{correct}/{total} @ {snr} dB"

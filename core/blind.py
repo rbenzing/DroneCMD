@@ -8,13 +8,18 @@ kept only as ground truth for the profile-ID metric.
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple, TypeVar
+from typing import List, Optional, Tuple, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 
-from core.ofdm import OFDMProfile, ofdm_equalized_symbols
-from core.profiles import SC_CATALOG, Family, SCMod, SCProfileSpec
+from core.ofdm import (
+    OFDM_SYNC_THRESHOLD,
+    OFDMProfile,
+    ofdm_equalized_symbols,
+    ofdm_sync_confidence,
+)
+from core.profiles import OFDM_CATALOG, SC_CATALOG, Family, SCMod, SCProfileSpec
 from core.single_carrier import (
     SC_SYNC_THRESHOLD,
     preamble_wave_fsk,
@@ -240,3 +245,33 @@ def resolve_sc_profile(iq: Complex) -> Tuple[Optional[SCProfileSpec], float]:
         if matched is not None:
             best_spec = matched
     return best_spec, best_peak
+
+
+def resolve_ofdm_profile(iq: Complex) -> Tuple[Optional[str], float]:
+    """Blindly resolve an OFDM region to a catalog profile name.
+
+    Stage 1 (FFT-size-selective sync gate): score each OFDM_CATALOG profile
+    with :func:`core.ofdm.ofdm_sync_confidence`; discard those below
+    :data:`core.ofdm.OFDM_SYNC_THRESHOLD`. Rejects noise and wrong-FFT-size
+    profiles. Stage 2 (CP/layout-selective EVM tiebreak): among locked
+    candidates, pick the lowest :func:`_ofdm_data_evm`. Returns ``(None, best)``
+    if nothing locks OR the winner's EVM exceeds :data:`OFDM_EVM_MAX` (loud
+    no-lock -- the region is not trustworthy OFDM).
+
+    Returns:
+        ``(name, sync_confidence)`` on a lock, else ``(None, best_conf)``.
+    """
+    signal = np.asarray(iq, dtype=np.complex128)
+    best_conf = 0.0
+    locked: List[Tuple[str, float, float]] = []
+    for name, profile in OFDM_CATALOG.items():
+        conf = ofdm_sync_confidence(signal, profile)
+        best_conf = max(best_conf, conf)
+        if conf >= OFDM_SYNC_THRESHOLD:
+            locked.append((name, conf, _ofdm_data_evm(signal, profile)))
+    if not locked:
+        return None, best_conf
+    name, conf, evm = min(locked, key=lambda t: t[2])
+    if evm > OFDM_EVM_MAX:
+        return None, best_conf
+    return name, conf
