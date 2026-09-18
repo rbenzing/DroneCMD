@@ -68,3 +68,20 @@ def test_profile_id_metrics_empty() -> None:
 
     m = profile_id_metrics([])
     assert m.accuracy == 0.0
+
+
+def test_coded_link_metrics_basic() -> None:
+    from validation.metrics import coded_link_metrics
+
+    t = np.array([1, 0, 1, 1], dtype=np.uint8)
+    m = coded_link_metrics([(t, t.copy()), (t, None)], snr_by_pair=[30.0, 5.0])
+    assert m.fer == 0.5  # one perfect, one failed
+    assert 0.0 < m.coded_ber < 1.0  # 4 of 8 bits wrong
+    assert m.ber_by_snr[30.0] == 0.0 and m.fer_by_snr[5.0] == 1.0
+
+
+def test_coded_link_metrics_empty() -> None:
+    from validation.metrics import coded_link_metrics
+
+    m = coded_link_metrics([])
+    assert m.coded_ber == 0.0 and m.fer == 0.0

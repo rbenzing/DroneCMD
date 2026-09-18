@@ -330,6 +330,7 @@ class DetectClassifyPipeline:
                     protocol=proto,
                     confidence=conf,
                     resolved_profile=resolved,
+                    payload=pkt,
                 )
             )
         return detections

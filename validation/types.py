@@ -44,6 +44,7 @@ class Detection:
     protocol: str
     confidence: float
     resolved_profile: Optional[str] = None
+    payload: Optional[bytes] = None
 
 
 @dataclass
@@ -79,6 +80,15 @@ class ProfileIdMetrics:
 
 
 @dataclass
+class CodedLinkMetrics:
+    coded_ber: float
+    fer: float
+    ber_by_snr: Dict[float, float] = field(default_factory=dict)
+    fer_by_snr: Dict[float, float] = field(default_factory=dict)
+    ci: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+
+
+@dataclass
 class RunManifest:
     seed: int
     dataset_hash: str
@@ -95,3 +105,4 @@ class RunResult:
     classification: ClassificationMetrics
     manifest: RunManifest
     profile_id: Optional[ProfileIdMetrics] = None
+    coded_link: Optional[CodedLinkMetrics] = None
