@@ -25,6 +25,7 @@ import numpy.typing as npt
 
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
+LLRs = npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True)
@@ -365,3 +366,32 @@ def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) ->
     if syms.size == 0:
         return np.zeros(0, dtype=np.uint8)
     return qpsk_demap(syms).astype(np.uint8)
+
+
+def _estimate_noise_var(syms: Complex) -> float:
+    """Noise variance from residual to the nearest unit-QPSK point (EVM^2)."""
+    ideal = (
+        np.where(syms.real >= 0.0, 1.0, -1.0)
+        + 1j * np.where(syms.imag >= 0.0, 1.0, -1.0)
+    ) / np.sqrt(2.0)
+    resid = syms - ideal
+    return max(float(np.mean(np.abs(resid) ** 2)), 1e-6)
+
+
+def ofdm_soft_bits(
+    rx: Complex,
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+    *,
+    noise_var: "float | None" = None,
+) -> LLRs:
+    """Per-bit LLRs (L>0 => bit 0) for a QPSK OFDM burst; empty on no-lock."""
+    syms = ofdm_equalized_symbols(rx, profile)
+    if syms.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    nv = _estimate_noise_var(syms) if noise_var is None else noise_var
+    # Gray QPSK, unit points (±1±1j)/sqrt2: L(I)=2*sqrt2*Re/nv, L(Q)=2*sqrt2*Im/nv.
+    scale = 2.0 * np.sqrt(2.0) / nv
+    out = np.empty(2 * syms.size, dtype=np.float64)
+    out[0::2] = scale * syms.real
+    out[1::2] = scale * syms.imag
+    return out

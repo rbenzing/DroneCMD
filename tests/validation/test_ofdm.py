@@ -237,3 +237,31 @@ def test_ofdm_equalized_symbols_roundtrip_and_empty() -> None:
         np.zeros(4, dtype=np.complex128), DEFAULT_OFDM_PROFILE
     )
     assert empty.size == 0 and empty.dtype == np.complex128
+
+
+def test_ofdm_soft_bits_sign_matches_hard_and_scales_with_snr() -> None:
+    from core.ofdm import (
+        DEFAULT_OFDM_PROFILE,
+        demodulate_ofdm,
+        modulate_ofdm,
+        ofdm_soft_bits,
+    )
+
+    b = np.array([1, 0, 0, 1, 1, 1, 0, 0] * 12, dtype=np.uint8)
+    clean = modulate_ofdm(b, DEFAULT_OFDM_PROFILE).astype(np.complex128)
+    hi, _, _ = add_awgn_at_snr(clean, 30.0, rng(1))
+    hard = demodulate_ofdm(hi.astype(np.complex128), DEFAULT_OFDM_PROFILE)
+    llr = ofdm_soft_bits(hi.astype(np.complex128), DEFAULT_OFDM_PROFILE)
+    assert llr.size == hard.size
+    assert np.array_equal((llr < 0).astype(np.uint8), hard)  # sign == hard bit
+    lo, _, _ = add_awgn_at_snr(clean, 8.0, rng(1))
+    llr_lo = ofdm_soft_bits(lo.astype(np.complex128), DEFAULT_OFDM_PROFILE)
+    assert np.mean(np.abs(llr)) > np.mean(np.abs(llr_lo))  # |LLR| grows with SNR
+
+
+def test_ofdm_soft_bits_empty_on_short() -> None:
+    from core.ofdm import DEFAULT_OFDM_PROFILE, ofdm_soft_bits
+
+    assert (
+        ofdm_soft_bits(np.zeros(4, dtype=np.complex128), DEFAULT_OFDM_PROFILE).size == 0
+    )
