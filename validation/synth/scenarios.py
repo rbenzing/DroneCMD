@@ -19,7 +19,14 @@ from typing import Dict, List
 
 import numpy as np
 
-from core.profiles import DEFAULT_SC_PROFILE_NAME, SC_CATALOG, Family, SCMod, family_of
+from core.profiles import (
+    DEFAULT_SC_PROFILE_NAME,
+    OFDM_CATALOG,
+    SC_CATALOG,
+    Family,
+    SCMod,
+    family_of,
+)
 from validation.repro import rng
 from validation.synth.channel import add_awgn_at_snr
 from validation.synth.modulators import modulate
@@ -151,7 +158,9 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                     0, 256, size=spec.payload_len, dtype=np.uint8
                 ).tobytes()
                 if scheme == ModScheme.OFDM:
-                    clean = modulate(payload, ModScheme.OFDM)
+                    clean = modulate(
+                        payload, ModScheme.OFDM, ofdm_profile=OFDM_CATALOG[name]
+                    )
                 else:
                     clean = modulate(
                         payload,

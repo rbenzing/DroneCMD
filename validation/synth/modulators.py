@@ -22,6 +22,7 @@ from scipy.ndimage import gaussian_filter1d
 from validation.types import IQSamples, ModScheme
 
 if TYPE_CHECKING:
+    from core.ofdm import OFDMProfile
     from core.single_carrier import SCProfile
 
 # Schemes carried by the shared core.single_carrier preamble + payload PHY,
@@ -100,11 +101,13 @@ def _sc_preamble(scheme: ModScheme, profile: SCProfile) -> npt.NDArray[np.comple
     return preamble_wave_psk(profile)
 
 
-def _ofdm(bits: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
+def _ofdm(
+    bits: npt.NDArray[np.float64], profile: "Optional[OFDMProfile]" = None
+) -> npt.NDArray[np.complex128]:
     """OFDM via the shared PHY in :mod:`core.ofdm` (deterministic, no RNG)."""
-    from core.ofdm import modulate_ofdm
+    from core.ofdm import DEFAULT_OFDM_PROFILE, modulate_ofdm
 
-    return modulate_ofdm(bits.astype(np.uint8))
+    return modulate_ofdm(bits.astype(np.uint8), profile or DEFAULT_OFDM_PROFILE)
 
 
 def modulate(
@@ -117,6 +120,7 @@ def modulate(
     rolloff: float = 0.35,
     differential: bool = False,
     pilot_spacing: int = 0,
+    ofdm_profile: "Optional[OFDMProfile]" = None,
 ) -> IQSamples:
     """Modulate ``data`` bytes to complex64 IQ, unit average power.
 
@@ -141,7 +145,10 @@ def modulate(
     OFDM ignores ``sps`` and ``differential`` entirely -- its symbol length
     is fixed by the shared :mod:`core.ofdm` profile (``N + CP``
     samples/symbol), not by samples per bit/symbol, and it carries its own
-    STF/LTF preamble instead of the single-carrier one.
+    STF/LTF preamble instead of the single-carrier one. The OFDM
+    subcarrier/CP layout is selected by ``ofdm_profile`` (default
+    ``core.ofdm.DEFAULT_OFDM_PROFILE``); ``ofdm_profile`` is ignored for
+    single-carrier schemes.
 
     Args:
         data: Payload bytes to modulate (MSB-first bit order).
@@ -160,6 +167,10 @@ def modulate(
             tracking at the receiver. Ignored for differential PSK and for
             FSK/GFSK/OFDM. Default 0 (pilotless) reproduces the PE framing
             exactly.
+        ofdm_profile: OFDM-only -- selects the :class:`core.ofdm.OFDMProfile`
+            subcarrier/CP layout. ``None`` (default) uses
+            ``core.ofdm.DEFAULT_OFDM_PROFILE``, reproducing today's OFDM
+            output exactly. Ignored for FSK/GFSK/BPSK/QPSK.
 
     Returns:
         Unit-average-power IQ samples as ``complex64``. For FSK/GFSK/BPSK/
@@ -179,7 +190,7 @@ def modulate(
     bits = _bits_from_bytes(data)
     iq: npt.NDArray[np.complex128]
     if scheme == ModScheme.OFDM:
-        iq = _ofdm(bits)
+        iq = _ofdm(bits, ofdm_profile)
     elif scheme in _SINGLE_CARRIER_SCHEMES:
         from core.single_carrier import SCProfile
 

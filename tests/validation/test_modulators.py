@@ -181,3 +181,33 @@ def test_modulate_pilots_ignored_for_differential() -> None:
         data, ModScheme.QPSK, sps=8, differential=True, pilot_spacing=8
     )
     assert np.array_equal(diff_plain, diff_pilots)
+
+
+def test_modulate_ofdm_profile_roundtrips() -> None:
+    import numpy as np
+
+    from core.ofdm import demodulate_ofdm
+    from core.profiles import OFDM_CATALOG
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(20))
+    for name in ("wifi_40", "ofdm_nb"):
+        iq = modulate(payload, ModScheme.OFDM, ofdm_profile=OFDM_CATALOG[name])
+        assert iq.dtype == np.complex64
+        bits = demodulate_ofdm(iq.astype(np.complex128), OFDM_CATALOG[name])
+        expect = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+        assert np.array_equal(bits[: len(expect)], expect)
+
+
+def test_modulate_ofdm_default_profile_backcompat() -> None:
+    import numpy as np
+
+    from core.ofdm import DEFAULT_OFDM_PROFILE
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(24))
+    a = modulate(payload, ModScheme.OFDM)
+    b = modulate(payload, ModScheme.OFDM, ofdm_profile=DEFAULT_OFDM_PROFILE)
+    assert np.array_equal(a, b)

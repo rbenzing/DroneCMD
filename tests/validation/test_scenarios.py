@@ -118,3 +118,19 @@ def test_build_scenario_scheme_by_protocol_backcompat() -> None:
     caps = build_scenario(spec)
     assert caps[0].provenance["profile"] == "qpsk_link"
     assert caps[0].provenance["scheme"] == "qpsk"
+
+
+def test_build_scenario_ofdm_profile_provenance() -> None:
+    from validation import create_synth_dataset
+
+    ds = create_synth_dataset(
+        protocols=["wide", "narrow"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        profile_by_protocol={"wide": "wifi_40", "narrow": "ofdm_nb"},
+        seed=2,
+    )
+    by_proto = {c.provenance["protocol"]: c.provenance for c in ds}
+    assert by_proto["wide"]["profile"] == "wifi_40"
+    assert by_proto["wide"]["scheme"] == "ofdm"
+    assert by_proto["narrow"]["profile"] == "ofdm_nb"
