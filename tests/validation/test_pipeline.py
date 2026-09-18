@@ -326,6 +326,26 @@ def test_ofdm_region_to_bytes_noise_is_loud_none() -> None:
     assert pkt == b"" and resolved is None
 
 
+def test_coded_region_decodes_and_crc_loud_fail() -> None:
+    from core.coding import CODING_CATALOG
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(20))
+    iq = modulate(payload, ModScheme.BPSK, sps=16, coding=CODING_CATALOG["rep3"])
+    out, name = single_carrier_region_to_bytes(iq.astype(np.complex64), 1e6)
+    assert name == "rep_bpsk"
+    assert out[: len(payload)] == payload  # coded round-trip recovers the payload
+
+    # Corrupt the payload region heavily so rep3 cannot correct -> CRC fails -> loud (b"", None)
+    bad = iq.copy()
+    body = bad[26 * 16 :]  # skip the Barker-13x2 preamble (26*sps samples)
+    body[: (2 * body.size) // 3] = 0.0  # wipe 2/3 of the payload
+    out2, name2 = single_carrier_region_to_bytes(bad.astype(np.complex64), 1e6)
+    assert out2 == b"" and name2 is None
+
+
 def test_pipeline_records_resolved_ofdm_profile() -> None:
     from validation import create_synth_dataset
     from validation.pipeline import DetectClassifyPipeline

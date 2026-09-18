@@ -131,7 +131,14 @@ def single_carrier_region_to_bytes(
 
     Returns:
         ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"", None)``
-        if the region is empty or resolution/demod did not lock.
+        if the region is empty or resolution/demod did not lock. If the
+        resolved profile carries a channel code (``spec.coding``, e.g.
+        ``rep_bpsk``), the hard bits are deinterleaved
+        (:func:`core.coding.deinterleave`), decoded through the matching
+        codec (:func:`core.coding.make_codec`), and CRC-checked
+        (:func:`core.coding.check_and_strip_crc`); the payload is returned
+        only when the CRC passes, otherwise ``(b"", None)`` (loud failure --
+        never silently wrong bits).
     """
     if len(iq_region) == 0:
         return b"", None
@@ -154,6 +161,23 @@ def single_carrier_region_to_bytes(
         )
     if len(bits) == 0:
         return b"", None
+    if spec.coding is not None:
+        from core.coding import (
+            CODING_CATALOG,
+            CODING_INTERLEAVE_DEPTH,
+            check_and_strip_crc,
+            deinterleave,
+            make_codec,
+        )
+
+        deint = deinterleave(bits.astype(np.uint8), CODING_INTERLEAVE_DEPTH).astype(
+            np.uint8
+        )
+        frame = make_codec(CODING_CATALOG[spec.coding]).decode(deint).bits
+        payload, ok = check_and_strip_crc(frame)
+        if not ok:
+            return b"", None
+        return np.packbits(payload.astype(np.uint8)).tobytes(), spec.name
     return np.packbits(bits.astype(np.uint8)).tobytes(), spec.name
 
 
