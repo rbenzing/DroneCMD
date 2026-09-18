@@ -14,11 +14,12 @@ is drawn from a single :func:`validation.repro.rng` generator seeded from
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 import numpy as np
 
+from core.profiles import DEFAULT_SC_PROFILE_NAME, SC_CATALOG, Family, SCMod, family_of
 from validation.repro import rng
 from validation.synth.channel import add_awgn_at_snr
 from validation.synth.modulators import modulate
@@ -36,7 +37,15 @@ class DatasetSpec:
         sample_rate: Sample rate in Hz recorded on each capture.
         seed: Seed for the single generator driving all randomness.
         scheme_by_protocol: Maps each protocol name to its
-            :class:`~validation.types.ModScheme`.
+            :class:`~validation.types.ModScheme`. Retained for back-compat;
+            a protocol present here (and absent from ``profile_by_protocol``)
+            resolves to that scheme's canonical catalog profile.
+        profile_by_protocol: Maps each protocol name to a named
+            :mod:`core.profiles` catalog profile (e.g. ``"ble_2m"``). This is
+            the primary profile selector: it takes precedence over
+            ``scheme_by_protocol`` for a given protocol. A protocol absent
+            from both maps falls back to the framework default profile
+            (``core.profiles.DEFAULT_SC_PROFILE_NAME``, ``"sik_gfsk"``).
         payload_len: Number of random payload bytes to modulate per packet.
         guard: Number of noise-only samples placed before and after the
             packet.
@@ -56,12 +65,49 @@ class DatasetSpec:
     n_per_cell: int
     sample_rate: float
     seed: int
-    scheme_by_protocol: Dict[str, ModScheme]
+    scheme_by_protocol: Dict[str, ModScheme] = field(default_factory=dict)
+    profile_by_protocol: Dict[str, str] = field(default_factory=dict)
     payload_len: int = 32
     guard: int = 512
     sps: int = 8
     differential: bool = False
     pilot_spacing: int = 0
+
+
+# Canonical catalog profile for each legacy ModScheme (back-compat path for
+# callers that still pass `scheme_by_protocol` instead of naming a profile).
+_SCHEME_TO_PROFILE = {
+    ModScheme.FSK: "fsk_basic",
+    ModScheme.GFSK: "sik_gfsk",
+    ModScheme.BPSK: "psk_c2",
+    ModScheme.QPSK: "qpsk_link",
+    ModScheme.OFDM: "wifi_20",
+}
+
+# core.profiles.SCMod -> validation.types.ModScheme (both mirror the same
+# single-carrier modulation set; kept as separate enums so core does not
+# depend on validation).
+_SCMOD_TO_SCHEME = {
+    SCMod.FSK: ModScheme.FSK,
+    SCMod.GFSK: ModScheme.GFSK,
+    SCMod.BPSK: ModScheme.BPSK,
+    SCMod.QPSK: ModScheme.QPSK,
+}
+
+
+def _resolve_profile_name(spec: DatasetSpec, proto: str) -> str:
+    """Resolve the catalog profile name to use for ``proto``.
+
+    Precedence: an explicit ``spec.profile_by_protocol`` entry, else the
+    canonical profile for ``spec.scheme_by_protocol[proto]`` (back-compat),
+    else the framework default profile.
+    """
+    if proto in spec.profile_by_protocol:
+        return spec.profile_by_protocol[proto]
+    scheme = spec.scheme_by_protocol.get(proto)
+    if scheme is not None:
+        return _SCHEME_TO_PROFILE[scheme]
+    return DEFAULT_SC_PROFILE_NAME
 
 
 def _noise(n: int, std: float, generator: np.random.Generator) -> IQSamples:
@@ -93,19 +139,29 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
     g = rng(spec.seed)
     captures: List[LabeledCapture] = []
     for proto in spec.protocols:
-        scheme = spec.scheme_by_protocol[proto]
+        name = _resolve_profile_name(spec, proto)
+        if family_of(name) == Family.OFDM:
+            scheme = ModScheme.OFDM
+        else:
+            entry = SC_CATALOG[name]
+            scheme = _SCMOD_TO_SCHEME[entry.mod]
         for snr in spec.snr_grid_db:
             for _ in range(spec.n_per_cell):
                 payload = g.integers(
                     0, 256, size=spec.payload_len, dtype=np.uint8
                 ).tobytes()
-                clean = modulate(
-                    payload,
-                    scheme,
-                    sps=spec.sps,
-                    differential=spec.differential,
-                    pilot_spacing=spec.pilot_spacing,
-                )
+                if scheme == ModScheme.OFDM:
+                    clean = modulate(payload, ModScheme.OFDM)
+                else:
+                    clean = modulate(
+                        payload,
+                        scheme,
+                        sps=entry.profile.sps,
+                        mod_index=entry.profile.mod_index,
+                        bt=entry.profile.bt,
+                        differential=spec.differential,
+                        pilot_spacing=spec.pilot_spacing,
+                    )
                 noisy_pkt, noise_std, achieved = add_awgn_at_snr(clean, snr, g)
                 pre = _noise(spec.guard, noise_std, g)
                 post = _noise(spec.guard, noise_std, g)
@@ -120,6 +176,7 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                         provenance={
                             "source": "synth",
                             "protocol": proto,
+                            "profile": name,
                             "scheme": scheme.value,
                             "snr_db": float(achieved),
                             "requested_snr_db": float(snr),

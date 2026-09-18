@@ -83,3 +83,38 @@ def test_build_scenario_records_pilot_spacing() -> None:
     )
     caps = build_scenario(spec)
     assert caps[0].provenance["pilot_spacing"] == 8
+
+
+def test_build_scenario_records_profile_and_uses_its_params() -> None:
+    from validation.synth.scenarios import DatasetSpec, build_scenario
+
+    spec = DatasetSpec(
+        protocols=["p_ble2m"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        sample_rate=2_048_000.0,
+        seed=1,
+        profile_by_protocol={"p_ble2m": "ble_2m"},
+    )
+    caps = build_scenario(spec)
+    assert caps[0].provenance["profile"] == "ble_2m"
+    assert caps[0].provenance["scheme"] == "gfsk"
+
+
+def test_build_scenario_scheme_by_protocol_backcompat() -> None:
+    from validation.synth.scenarios import DatasetSpec, build_scenario
+    from validation.types import ModScheme
+
+    # Legacy caller path: scheme_by_protocol still works, mapped to a
+    # canonical catalog profile.
+    spec = DatasetSpec(
+        protocols=["p"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        sample_rate=2_048_000.0,
+        seed=1,
+        scheme_by_protocol={"p": ModScheme.QPSK},
+    )
+    caps = build_scenario(spec)
+    assert caps[0].provenance["profile"] == "qpsk_link"
+    assert caps[0].provenance["scheme"] == "qpsk"

@@ -43,12 +43,13 @@ def create_synth_dataset(
     protocols: List[str],
     snr_grid_db: List[float],
     n_per_cell: int,
-    scheme_by_protocol: Dict[str, ModScheme],
+    scheme_by_protocol: Optional[Dict[str, ModScheme]] = None,
     sample_rate: float = 2_048_000.0,
     seed: int = 42,
     payload_len: int = 32,
     differential: bool = False,
     pilot_spacing: int = 0,
+    profile_by_protocol: Optional[Dict[str, str]] = None,
 ) -> LabeledDataset:
     """Create a synthetic labeled dataset for validation.
 
@@ -56,7 +57,11 @@ def create_synth_dataset(
         protocols: List of protocol names (e.g., ["mavlink", "dji"]).
         snr_grid_db: List of SNR values in dB to generate.
         n_per_cell: Number of samples per SNR value.
-        scheme_by_protocol: Mapping of protocol name to ModScheme.
+        scheme_by_protocol: Mapping of protocol name to ModScheme. Retained
+            for back-compat; a protocol present here (and absent from
+            ``profile_by_protocol``) resolves to that scheme's canonical
+            catalog profile. Optional -- omit when using
+            ``profile_by_protocol`` instead.
         sample_rate: Sample rate in Hz (default 2.048 MHz).
         seed: Random seed for reproducibility (default 42).
         payload_len: Payload length in bytes (default 32).
@@ -65,6 +70,12 @@ def create_synth_dataset(
         pilot_spacing: If > 0, interleave known pilots into coherent BPSK/QPSK
             payloads for pilot-aided phase tracking (default 0 = pilotless).
             Ignored by differential PSK and FSK/GFSK/OFDM.
+        profile_by_protocol: Mapping of protocol name to a named
+            ``core.profiles`` catalog profile (e.g. ``"ble_2m"``). This is
+            the primary profile selector and takes precedence over
+            ``scheme_by_protocol`` for a given protocol. A protocol absent
+            from both mappings falls back to the framework default profile
+            (``core.profiles.DEFAULT_SC_PROFILE_NAME``, ``"sik_gfsk"``).
 
     Returns:
         A LabeledDataset instance.
@@ -75,7 +86,8 @@ def create_synth_dataset(
         n_per_cell=n_per_cell,
         sample_rate=sample_rate,
         seed=seed,
-        scheme_by_protocol=scheme_by_protocol,
+        scheme_by_protocol=scheme_by_protocol or {},
+        profile_by_protocol=profile_by_protocol or {},
         payload_len=payload_len,
         differential=differential,
         pilot_spacing=pilot_spacing,
