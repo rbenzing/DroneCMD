@@ -3,17 +3,17 @@
 A profile bundles a modulation with its single-carrier PHY parameters
 (:class:`core.single_carrier.SCProfile`) under a stable name, so datasets,
 the blind resolver, and the CLI all refer to the same catalog. Split by
-:class:`Family`; the OFDM catalog holds only the fixed ``wifi_20`` profile
-for now (parametric OFDM profiles are a later phase). This module depends
+:class:`Family`; the OFDM catalog holds a curated set of profiles with
+distinct FFT sizes and same-N CP/layout variants. This module depends
 only on :mod:`core.single_carrier` and :mod:`core.ofdm` -- no heavy imports.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
-from core.ofdm import DEFAULT_OFDM_PROFILE
+from core.ofdm import DEFAULT_OFDM_PROFILE, OFDMProfile
 from core.single_carrier import SCProfile
 
 
@@ -87,9 +87,36 @@ SC_CATALOG: Dict[str, SCProfileSpec] = {
     "qpsk_link": SCProfileSpec("qpsk_link", SCMod.QPSK, SCProfile(sps=8)),
 }
 
-# OFDM catalog: only the fixed 802.11a-style profile for now (P2-OFDM adds
-# parametric OFDM profiles). Value is the `core.ofdm` profile object.
-OFDM_CATALOG: Dict[str, object] = {"wifi_20": DEFAULT_OFDM_PROFILE}
+
+def _ofdm_profile(
+    n_fft: int, cp: int, occ_max: int, pilots: Tuple[int, ...]
+) -> OFDMProfile:
+    """Build an OFDMProfile with occupied = [-occ_max, occ_max]\\{0}, the given
+    pilots (values all 1+0j), and data = occupied minus pilots."""
+    occupied = [k for k in range(-occ_max, occ_max + 1) if k != 0]
+    data = tuple(k for k in occupied if k not in pilots)
+    pilot_values = tuple(1 + 0j for _ in pilots)
+    return OFDMProfile(
+        fft_size=n_fft,
+        cp_len=cp,
+        data_carriers=data,
+        pilot_carriers=tuple(pilots),
+        pilot_values=pilot_values,
+    )
+
+
+# Broader OFDM catalog (see the design spec). wifi_20 == DEFAULT_OFDM_PROFILE.
+# Distinct FFT sizes (wifi_20/wifi_40/ofdm_nb) are separated blindly by the
+# Schmidl & Cox sync gate; the same-N variants (wifi_20_longcp = long CP,
+# wifi_20_altpilot = alternate pilot layout) are separated by the trial-demod
+# EVM tiebreak in `core.blind.resolve_ofdm_profile`.
+OFDM_CATALOG: Dict[str, OFDMProfile] = {
+    "wifi_20": DEFAULT_OFDM_PROFILE,
+    "wifi_40": _ofdm_profile(128, 32, 58, (-53, -25, -11, 11, 25, 53)),
+    "ofdm_nb": _ofdm_profile(32, 8, 13, (-11, -3, 3, 11)),
+    "wifi_20_longcp": _ofdm_profile(64, 32, 26, (-21, -7, 7, 21)),
+    "wifi_20_altpilot": _ofdm_profile(64, 16, 26, (-25, -11, 11, 25)),
+}
 
 # The framework default single-carrier profile name (the GFSK default).
 DEFAULT_SC_PROFILE_NAME = "sik_gfsk"

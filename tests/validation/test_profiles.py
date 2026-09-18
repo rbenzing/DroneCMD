@@ -59,3 +59,48 @@ def test_spec_is_frozen() -> None:
     spec = SC_CATALOG["psk_c2"]
     with pytest.raises(Exception):
         spec.name = "x"  # type: ignore[misc]
+
+
+def test_ofdm_catalog_has_broader_profiles() -> None:
+    from core.ofdm import OFDMProfile
+    from core.profiles import OFDM_CATALOG, Family, all_profile_names, family_of
+
+    expected = {"wifi_20", "wifi_40", "ofdm_nb", "wifi_20_longcp", "wifi_20_altpilot"}
+    assert expected <= set(OFDM_CATALOG)
+    for name in expected:
+        assert isinstance(OFDM_CATALOG[name], OFDMProfile)
+        assert family_of(name) == Family.OFDM
+        assert name in all_profile_names()
+
+
+def test_ofdm_catalog_distinct_shapes() -> None:
+    from core.profiles import OFDM_CATALOG
+
+    c = OFDM_CATALOG
+    assert (c["wifi_20"].fft_size, c["wifi_40"].fft_size, c["ofdm_nb"].fft_size) == (
+        64,
+        128,
+        32,
+    )
+    # same-N CP variant differs only in cp_len
+    assert c["wifi_20_longcp"].fft_size == 64 and c["wifi_20_longcp"].cp_len == 32
+    assert c["wifi_20"].cp_len == 16
+    # same-N layout variant differs only in pilot placement
+    assert c["wifi_20_altpilot"].fft_size == 64 and c["wifi_20_altpilot"].cp_len == 16
+    assert set(c["wifi_20_altpilot"].pilot_carriers) != set(c["wifi_20"].pilot_carriers)
+    assert set(c["wifi_20_altpilot"].occupied_carriers) == set(
+        c["wifi_20"].occupied_carriers
+    )
+
+
+def test_ofdm_catalog_profiles_roundtrip() -> None:
+    import numpy as np
+
+    from core.ofdm import demodulate_ofdm, modulate_ofdm
+    from core.profiles import OFDM_CATALOG
+
+    b = np.array([1, 0, 0, 1, 1, 1, 0, 0] * 12, dtype=np.uint8)
+    for name, profile in OFDM_CATALOG.items():
+        rx = modulate_ofdm(b, profile)
+        out = demodulate_ofdm(rx, profile)
+        assert np.array_equal(out[: len(b)], b), f"round-trip failed for {name}"
