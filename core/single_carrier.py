@@ -297,23 +297,37 @@ def sc_diff_encode(symbols: Complex) -> Complex:
     return encoded
 
 
-def sc_diff_decode(symbols: Complex) -> Complex:
+def sc_diff_decode(
+    symbols: Complex, initial_ref: complex = complex(1.0, 0.0)
+) -> Complex:
     """Differentially decode a PSK symbol stream (inverse of `sc_diff_encode`).
 
     Computes ``d[k] = symbols[k] * conj(symbols[k-1])`` with the reference
-    ``symbols[-1] = 1``, so ``d[0] = symbols[0]``. For unit-modulus PSK
-    symbols this recovers the original data symbols independent of any
-    constant (uncompensated) absolute carrier phase, since that phase cancels
-    in the conjugate product.
+    ``symbols[-1] = initial_ref``, so ``d[0] = symbols[0] * conj(initial_ref)``.
+    For unit-modulus PSK symbols this recovers the original data symbols
+    independent of any constant (uncompensated) absolute carrier phase, since
+    that phase cancels in the conjugate product -- but only from ``d[1]``
+    onward when ``initial_ref`` is the default noiseless unit reference:
+    ``symbols[0]`` itself still carries the raw channel phase in that case,
+    since there is no earlier received symbol for it to cancel against (see
+    `sc_demodulate_psk`, which passes the received last preamble symbol as
+    ``initial_ref`` instead, extending the same phase-ambiguity cancellation
+    to the first payload symbol).
 
     Args:
         symbols: Differentially encoded (received) symbols (``complex128``).
+        initial_ref: Reference symbol for ``d[0]`` (the ``symbols[-1]``
+            slot). Defaults to the unit reference matching
+            `sc_diff_encode`'s own convention; a caller that has a received,
+            channel-affected symbol known to have been transmitted as ``+1``
+            (e.g. the last preamble symbol) can pass it here so ``d[0]``
+            benefits from the same phase cancellation as every later symbol.
 
     Returns:
         Decoded data symbols (``complex128``), same length as ``symbols``.
     """
     data = np.asarray(symbols, dtype=np.complex128)
-    prev = np.concatenate([[complex(1.0, 0.0)], data[:-1]])
+    prev = np.concatenate([[complex(initial_ref)], data[:-1]])
     decoded: Complex = data * np.conj(prev)
     return decoded
 
@@ -372,8 +386,13 @@ def sc_demodulate_psk(
        arbitrary channel phase rotation instead of suffering a fixed
        (e.g. 90-degree) bit-flip ambiguity.
     5. Differential mode: sample symbol centers directly (no absolute-phase
-       correction needed) and decode via :func:`sc_diff_decode` before
-       demapping.
+       correction needed) and decode via :func:`sc_diff_decode`, seeded with
+       the received last preamble symbol (known to have been transmitted as
+       ``+1``, see `PREAMBLE_SYMBOLS`) as the initial reference instead of
+       :func:`sc_diff_decode`'s default unit reference -- this extends the
+       differential decode's phase-ambiguity cancellation to the first
+       payload symbol too (which otherwise carries the raw, uncompensated
+       channel phase; see :func:`sc_diff_decode`), before demapping.
 
     Args:
         rx: Received IQ samples (``complex128`` or castable).
@@ -404,7 +423,20 @@ def sc_demodulate_psk(
 
     if differential:
         centers = payload[profile.sps // 2 :: profile.sps]
-        deltas = sc_diff_decode(centers)
+        # The last preamble symbol is known to have been transmitted as
+        # +1 (see PREAMBLE_SYMBOLS), so the received (channel-affected)
+        # sample at its center is exactly the reference `sc_diff_decode`
+        # needs to phase-protect the FIRST payload symbol too, instead of
+        # leaving it to carry the raw, uncompensated channel phase.
+        preamble_centers = derotated[start : start + len(ref)][
+            profile.sps // 2 :: profile.sps
+        ]
+        last_preamble_symbol = (
+            complex(preamble_centers[-1])
+            if preamble_centers.size > 0
+            else complex(1.0, 0.0)
+        )
+        deltas = sc_diff_decode(centers, initial_ref=last_preamble_symbol)
         bits: Bits = sc_demap_psk(deltas, bits_per_symbol)
         return bits
 

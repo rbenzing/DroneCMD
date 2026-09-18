@@ -207,3 +207,24 @@ def test_pipeline_differential_qpsk_end_to_end_recovers_payload() -> None:
     payload = bytes(range(16))
     recovered = _run_single_carrier_e2e(ModScheme.QPSK, payload, differential=True)
     assert recovered[: len(payload)] == payload
+
+
+def test_single_carrier_region_to_bytes_rejects_nondefault_sps() -> None:
+    """A non-default ``sps`` must fail loudly, not silently return b"".
+
+    The core single-carrier receivers always decode against
+    ``core.single_carrier.DEFAULT_SC_PROFILE`` (``sps=8``) regardless of
+    what's passed in here. Before this guard, calling with e.g. ``sps=4``
+    (matching a capture actually generated at a different profile) would
+    just fail preamble sync inside the demodulator and return ``b""`` with
+    no indication of why -- see ``single_carrier_region_to_bytes``'s
+    docstring.
+    """
+    import pytest
+
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.types import ModScheme
+
+    iq = np.ones(400, dtype=np.complex64)
+    with pytest.raises(ValueError, match="sps"):
+        single_carrier_region_to_bytes(iq, ModScheme.BPSK, 1e6, sps=4)

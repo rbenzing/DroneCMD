@@ -122,6 +122,18 @@ def single_carrier_region_to_bytes(
     preamble-driven and internally gate on lock confidence -- see
     :mod:`core.single_carrier`.
 
+    The core single-carrier receivers currently decode only against the
+    fixed ``core.single_carrier.DEFAULT_SC_PROFILE`` (``sps=8``,
+    ``mod_index=0.7``, ``bt=0.5``) -- full per-capture profile threading
+    (``sps``/``mod_index``/``bt``) is deferred to a later multi-profile
+    phase. A capture actually generated at a different ``sps`` would
+    otherwise fail preamble sync silently (the preamble reference length
+    would no longer match the transmitted preamble, so the matched filter
+    in :func:`core.single_carrier.sc_frame_sync` would never lock) and this
+    function would just return ``b""`` with no indication why. To make that
+    failure loud instead, ``sps`` is validated against the default profile
+    up front and a mismatch raises ``ValueError``.
+
     Args:
         iq_region: Complex baseband samples spanning one detected packet,
             including its Barker preamble near the start.
@@ -132,8 +144,10 @@ def single_carrier_region_to_bytes(
             validity check -- the underlying single-carrier receivers
             always demodulate against
             ``core.single_carrier.DEFAULT_SC_PROFILE`` (``sps=8``)
-            regardless of this value or of ``sps``/``differential`` below.
-        sps: Samples per symbol, used only to derive a placeholder
+            regardless of this value or of ``differential`` below.
+        sps: Samples per symbol. Must equal
+            ``core.single_carrier.DEFAULT_SC_PROFILE.sps`` (``8``) --
+            see above -- and is otherwise used only to derive a placeholder
             ``bitrate_bps`` for ``DemodConfig`` (see ``sample_rate`` above).
         differential: Forwarded to ``DemodConfig.differential``; consulted
             only by the BPSK/QPSK receiver, ignored for FSK/GFSK.
@@ -142,7 +156,27 @@ def single_carrier_region_to_bytes(
         Packed bytes (``numpy.packbits``) of the recovered (unpacked) bit
         stream, or ``b""`` if the region is empty or demodulation failed
         (preamble sync failure or zero bits recovered).
+
+    Raises:
+        ValueError: If ``sps`` differs from
+            ``core.single_carrier.DEFAULT_SC_PROFILE.sps`` -- non-default
+            profile captures are not yet supported by the core receivers
+            (see above), and demodulating them anyway would silently fail
+            preamble sync and return ``b""`` with no indication why.
     """
+    from core.single_carrier import DEFAULT_SC_PROFILE
+
+    if sps != DEFAULT_SC_PROFILE.sps:
+        raise ValueError(
+            f"single_carrier_region_to_bytes: sps={sps} != "
+            f"DEFAULT_SC_PROFILE.sps={DEFAULT_SC_PROFILE.sps}. The core "
+            "single-carrier receivers (FSKDemodulator/PSKDemodulator) "
+            "currently decode only against DEFAULT_SC_PROFILE; captures "
+            "generated at a non-default sps are not yet supported and "
+            "would otherwise fail preamble sync silently. Full "
+            "per-capture profile threading (sps/mod_index/bt) is deferred "
+            "to a later phase."
+        )
     if len(iq_region) == 0:
         return b""
     from core.demodulation import DemodConfig, DemodulationEngine
