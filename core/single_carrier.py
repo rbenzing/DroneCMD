@@ -91,7 +91,8 @@ def preamble_wave_psk(profile: SCProfile) -> Complex:
 
     The preamble symbols are placed on the real axis (BPSK) and held for
     ``profile.sps`` samples each, matching the rectangular pulse shaping the
-    synthetic QPSK modulator (``validation.synth.modulators._qpsk``) uses.
+    synthetic BPSK/QPSK modulator (``validation.synth.modulators``, via
+    :func:`sc_map_psk`) uses.
 
     Args:
         profile: Single-carrier PHY parameters (only ``sps`` is used).

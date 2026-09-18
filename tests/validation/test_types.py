@@ -6,7 +6,7 @@ from validation.types import Detection, LabeledCapture, ModScheme
 
 
 def test_modscheme_values():
-    assert {s.value for s in ModScheme} == {"fsk", "gfsk", "qpsk", "ofdm"}
+    assert {s.value for s in ModScheme} == {"fsk", "gfsk", "bpsk", "qpsk", "ofdm"}
 
 
 def test_labeled_capture_construction():

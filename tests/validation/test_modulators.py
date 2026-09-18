@@ -4,11 +4,18 @@ These tests are the correctness anchor for the modulator implementations:
 each scheme is modulated and then demodulated with an independent, inline
 reference demodulator (not the production code) to prove exact-bit recovery
 at high SNR (noiseless channel, 0 BER).
+
+Single-carrier schemes (FSK/GFSK/BPSK/QPSK) now prepend the shared
+``core.single_carrier`` preamble waveform to the payload, so the reference
+demods below locate the payload the same way a receiver would: skip the
+first ``len(preamble_wave_*)`` samples (using the shared preamble-geometry
+helpers to compute that offset), then demodulate independently.
 """
 from __future__ import annotations
 
 import numpy as np
 
+from core.single_carrier import DEFAULT_SC_PROFILE, preamble_wave_fsk, preamble_wave_psk
 from validation.synth.modulators import modulate
 from validation.types import ModScheme
 
@@ -19,11 +26,11 @@ def _bits(data: bytes) -> np.ndarray:
     return np.unpackbits(np.frombuffer(data, dtype=np.uint8))
 
 
-def _ref_demod_fsk(iq: np.ndarray, sps: int) -> np.ndarray:
+def _ref_demod_fsk(payload: np.ndarray, sps: int) -> np.ndarray:
     # instantaneous frequency = d(phase)/dt; sign at symbol centre -> bit
-    phase = np.unwrap(np.angle(iq))
+    phase = np.unwrap(np.angle(payload))
     inst_freq = np.diff(phase, prepend=phase[0])
-    n_sym = len(iq) // sps
+    n_sym = len(payload) // sps
     bits = np.empty(n_sym, dtype=np.uint8)
     for k in range(n_sym):
         seg = inst_freq[k * sps + sps // 4 : k * sps + 3 * sps // 4]
@@ -31,35 +38,79 @@ def _ref_demod_fsk(iq: np.ndarray, sps: int) -> np.ndarray:
     return bits
 
 
-def _ref_demod_qpsk(iq: np.ndarray, sps: int) -> np.ndarray:
-    n_sym = len(iq) // sps
-    out = []
-    for k in range(n_sym):
-        c = iq[k * sps + sps // 2]
-        i_bit = 0 if c.real >= 0 else 1
-        q_bit = 0 if c.imag >= 0 else 1
-        out.extend([i_bit, q_bit])
-    return np.array(out, dtype=np.uint8)
+def _ref_demod_psk(payload: np.ndarray, sps: int, bits_per_symbol: int) -> np.ndarray:
+    n_sym = len(payload) // sps
+    centers = np.array([payload[k * sps + sps // 2] for k in range(n_sym)])
+    if bits_per_symbol == 1:
+        return np.where(centers.real >= 0, 0, 1).astype(np.uint8)
+    out = np.empty(n_sym * 2, dtype=np.uint8)
+    out[0::2] = np.where(centers.real >= 0, 0, 1)
+    out[1::2] = np.where(centers.imag >= 0, 0, 1)
+    return out
+
+
+def _ref_diff_decode(symbols: np.ndarray) -> np.ndarray:
+    # d[k] = symbols[k] * conj(symbols[k-1]), symbols[-1] := 1 -- independent
+    # restatement of the differential-decode recurrence (mirrors, but does
+    # not call, core.single_carrier.sc_diff_decode).
+    prev = np.concatenate([[complex(1.0, 0.0)], symbols[:-1]])
+    return symbols * np.conj(prev)
+
+
+def _psk_symbol_centers(payload: np.ndarray, sps: int) -> np.ndarray:
+    n_sym = len(payload) // sps
+    return np.array([payload[k * sps + sps // 2] for k in range(n_sym)])
 
 
 def test_fsk_roundtrip_recovers_bits() -> None:
     iq = modulate(DATA, ModScheme.FSK, sps=8)
     assert iq.dtype == np.complex64
-    assert len(iq) == 8 * len(DATA) * 8  # sps * n_bits
-    rec = _ref_demod_fsk(iq, sps=8)
-    assert np.array_equal(rec, _bits(DATA))
-
-
-def test_qpsk_roundtrip_recovers_bits() -> None:
-    iq = modulate(DATA, ModScheme.QPSK, sps=8)
-    assert len(iq) == 8 * (len(DATA) * 8 // 2)
-    rec = _ref_demod_qpsk(iq, sps=8)
+    off = len(preamble_wave_fsk(DEFAULT_SC_PROFILE, gfsk=False))
+    assert len(iq) == off + 8 * len(DATA) * 8  # preamble + sps * n_bits
+    rec = _ref_demod_fsk(iq[off:], sps=8)
     assert np.array_equal(rec, _bits(DATA))
 
 
 def test_gfsk_roundtrip_recovers_bits() -> None:
     iq = modulate(DATA, ModScheme.GFSK, sps=8, bt=0.5)
-    rec = _ref_demod_fsk(iq, sps=8)
+    off = len(preamble_wave_fsk(DEFAULT_SC_PROFILE, gfsk=True))
+    rec = _ref_demod_fsk(iq[off:], sps=8)
+    assert np.array_equal(rec, _bits(DATA))
+
+
+def test_bpsk_roundtrip_recovers_bits() -> None:
+    iq = modulate(DATA, ModScheme.BPSK, sps=8)
+    off = len(preamble_wave_psk(DEFAULT_SC_PROFILE))
+    assert len(iq) == off + 8 * (len(DATA) * 8)  # sps * n_bits (1 bit/symbol)
+    rec = _ref_demod_psk(iq[off:], sps=8, bits_per_symbol=1)
+    assert np.array_equal(rec, _bits(DATA))
+
+
+def test_qpsk_roundtrip_recovers_bits() -> None:
+    iq = modulate(DATA, ModScheme.QPSK, sps=8)
+    off = len(preamble_wave_psk(DEFAULT_SC_PROFILE))
+    assert len(iq) == off + 8 * (len(DATA) * 8 // 2)
+    rec = _ref_demod_psk(iq[off:], sps=8, bits_per_symbol=2)
+    assert np.array_equal(rec, _bits(DATA))
+
+
+def test_bpsk_differential_roundtrip_recovers_bits() -> None:
+    iq = modulate(DATA, ModScheme.BPSK, sps=8, differential=True)
+    off = len(preamble_wave_psk(DEFAULT_SC_PROFILE))
+    centers = _psk_symbol_centers(iq[off:], sps=8)
+    decoded = _ref_diff_decode(centers)
+    rec = np.where(decoded.real >= 0, 0, 1).astype(np.uint8)
+    assert np.array_equal(rec, _bits(DATA))
+
+
+def test_qpsk_differential_roundtrip_recovers_bits() -> None:
+    iq = modulate(DATA, ModScheme.QPSK, sps=8, differential=True)
+    off = len(preamble_wave_psk(DEFAULT_SC_PROFILE))
+    centers = _psk_symbol_centers(iq[off:], sps=8)
+    decoded = _ref_diff_decode(centers)
+    rec = np.empty(len(decoded) * 2, dtype=np.uint8)
+    rec[0::2] = np.where(decoded.real >= 0, 0, 1)
+    rec[1::2] = np.where(decoded.imag >= 0, 0, 1)
     assert np.array_equal(rec, _bits(DATA))
 
 

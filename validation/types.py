@@ -13,6 +13,7 @@ IQSamples = npt.NDArray[np.complex64]
 class ModScheme(Enum):
     FSK = "fsk"
     GFSK = "gfsk"
+    BPSK = "bpsk"
     QPSK = "qpsk"
     OFDM = "ofdm"
 
