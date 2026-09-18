@@ -34,6 +34,7 @@ from scipy.ndimage import gaussian_filter1d
 
 Complex = npt.NDArray[np.complex128]
 Real = npt.NDArray[np.float64]
+Bits = npt.NDArray[np.uint8]
 
 
 @dataclass(frozen=True)
@@ -206,3 +207,207 @@ def sc_lock_confidence(rx: Complex, ref_wave: Complex, search_span: int) -> floa
         return 0.0
     _, peak = sc_frame_sync(rx, ref_wave, search_span)
     return abs(peak)
+
+
+def sc_map_psk(bits: Bits, bits_per_symbol: int) -> Complex:
+    """Map bits to unit-energy PSK symbols (synth Gray convention).
+
+    BPSK (``bits_per_symbol=1``) places each bit on the real axis: bit ``0``
+    maps to ``+1``, bit ``1`` maps to ``-1``. QPSK (``bits_per_symbol=2``)
+    splits the bitstream into interleaved in-phase/quadrature rails --
+    ``i_bits = bits[0::2]``, ``q_bits = bits[1::2]`` -- maps each rail with
+    the same 0->+1 / 1->-1 convention, and scales by ``1/sqrt(2)`` so every
+    symbol has unit energy.
+
+    Args:
+        bits: Input bits as ``uint8`` (0/1 valued). For QPSK, must have even
+            length.
+        bits_per_symbol: ``1`` for BPSK or ``2`` for QPSK.
+
+    Returns:
+        Complex symbols (``complex128``), length ``len(bits) //
+        bits_per_symbol``.
+
+    Raises:
+        ValueError: If ``bits_per_symbol`` is not 1 or 2, or if QPSK is
+            requested with an odd number of bits.
+    """
+    data = np.asarray(bits, dtype=np.uint8)
+    if bits_per_symbol == 1:
+        rail = 1.0 - 2.0 * data.astype(np.float64)
+        symbols: Complex = rail.astype(np.complex128)
+        return symbols
+    if bits_per_symbol == 2:
+        if data.size % 2 != 0:
+            raise ValueError("QPSK mapping requires an even number of bits")
+        i_rail = 1.0 - 2.0 * data[0::2].astype(np.float64)
+        q_rail = 1.0 - 2.0 * data[1::2].astype(np.float64)
+        symbols = ((i_rail + 1j * q_rail) / np.sqrt(2.0)).astype(np.complex128)
+        return symbols
+    raise ValueError(f"unsupported bits_per_symbol: {bits_per_symbol}")
+
+
+def sc_demap_psk(symbols: Complex, bits_per_symbol: int) -> Bits:
+    """Hard-decision inverse of :func:`sc_map_psk`.
+
+    Args:
+        symbols: Received/equalized PSK symbols (``complex128``).
+        bits_per_symbol: ``1`` for BPSK or ``2`` for QPSK.
+
+    Returns:
+        Recovered bits as ``uint8``, length ``len(symbols) *
+        bits_per_symbol``. For QPSK, bits are interleaved
+        ``[i0, q0, i1, q1, ...]`` matching :func:`sc_map_psk`'s convention.
+
+    Raises:
+        ValueError: If ``bits_per_symbol`` is not 1 or 2.
+    """
+    syms = np.asarray(symbols, dtype=np.complex128)
+    if bits_per_symbol == 1:
+        bits: Bits = np.where(syms.real > 0, 0, 1).astype(np.uint8)
+        return bits
+    if bits_per_symbol == 2:
+        i_bits = np.where(syms.real > 0, 0, 1).astype(np.uint8)
+        q_bits = np.where(syms.imag > 0, 0, 1).astype(np.uint8)
+        bits = np.empty(syms.size * 2, dtype=np.uint8)
+        bits[0::2] = i_bits
+        bits[1::2] = q_bits
+        return bits
+    raise ValueError(f"unsupported bits_per_symbol: {bits_per_symbol}")
+
+
+def sc_diff_encode(symbols: Complex) -> Complex:
+    """Differentially encode a PSK symbol stream.
+
+    Computes ``out[k] = out[k-1] * symbols[k]`` with the reference symbol
+    ``out[-1] = 1`` (i.e. the first output symbol carries ``symbols[0]``
+    directly). Since this recurrence is a running product, it reduces to a
+    cumulative product over ``symbols``.
+
+    Args:
+        symbols: Data symbols to encode (``complex128``).
+
+    Returns:
+        Differentially encoded symbols (``complex128``), same length as
+        ``symbols``.
+    """
+    data = np.asarray(symbols, dtype=np.complex128)
+    encoded: Complex = np.cumprod(data)
+    return encoded
+
+
+def sc_diff_decode(symbols: Complex) -> Complex:
+    """Differentially decode a PSK symbol stream (inverse of `sc_diff_encode`).
+
+    Computes ``d[k] = symbols[k] * conj(symbols[k-1])`` with the reference
+    ``symbols[-1] = 1``, so ``d[0] = symbols[0]``. For unit-modulus PSK
+    symbols this recovers the original data symbols independent of any
+    constant (uncompensated) absolute carrier phase, since that phase cancels
+    in the conjugate product.
+
+    Args:
+        symbols: Differentially encoded (received) symbols (``complex128``).
+
+    Returns:
+        Decoded data symbols (``complex128``), same length as ``symbols``.
+    """
+    data = np.asarray(symbols, dtype=np.complex128)
+    prev = np.concatenate([[complex(1.0, 0.0)], data[:-1]])
+    decoded: Complex = data * np.conj(prev)
+    return decoded
+
+
+def sc_estimate_cfo_psk(rx_preamble: Complex, sps: int) -> float:
+    """Estimate normalized carrier frequency offset from the split preamble.
+
+    The shared preamble (see module docstring) is Barker-13 repeated twice,
+    giving two identical 13-symbol halves ``h1``, ``h2``. In the absence of
+    CFO, ``h2`` is a noiseless copy of ``h1``; a residual carrier offset
+    rotates ``h2`` relative to ``h1`` by ``2*pi*cfo*(13*sps)`` radians (the
+    sample gap between the two halves). Correlating the halves and reading
+    off the phase of the result gives an unbiased CFO estimate, unambiguous
+    for ``abs(cfo) < 1 / (2 * 13 * sps)`` cycles/sample (the phase must stay
+    within +/-pi over the 13-symbol gap).
+
+    Args:
+        rx_preamble: Received samples spanning (at least) the preamble,
+            aligned so that ``rx_preamble[: 26*sps]`` is the two Barker-13
+            halves.
+        sps: Samples per symbol.
+
+    Returns:
+        Estimated CFO in cycles/sample (normalized frequency offset).
+    """
+    data = np.asarray(rx_preamble, dtype=np.complex128)
+    half_len = 13 * sps
+    h1 = data[:half_len]
+    h2 = data[half_len : 2 * half_len]
+    correlation = complex(np.sum(np.conj(h1) * h2))
+    cfo = float(np.angle(correlation) / (2 * np.pi * 13 * sps))
+    return cfo
+
+
+def sc_demodulate_psk(
+    rx: Complex,
+    profile: SCProfile,
+    *,
+    bits_per_symbol: int,
+    differential: bool,
+) -> Bits:
+    """Full coherent/differential PSK receiver: sync, CFO, demap.
+
+    Pipeline:
+
+    1. Locate the preamble via :func:`sc_frame_sync`; bail out (empty
+       result) if the lock confidence is below `SC_SYNC_THRESHOLD`.
+    2. Estimate CFO from the preamble (:func:`sc_estimate_cfo_psk`) and
+       derotate the entire received signal.
+    3. Re-run the matched filter on the derotated signal (small window
+       around the already-known start) to get a clean post-CFO phase
+       reference.
+    4. Coherent mode: derotate the payload by that reference phase (so the
+       preamble's known symbols land at ``+1``), sample symbol centers, and
+       hard-demap. This is what lets a coherent receiver resolve an
+       arbitrary channel phase rotation instead of suffering a fixed
+       (e.g. 90-degree) bit-flip ambiguity.
+    5. Differential mode: sample symbol centers directly (no absolute-phase
+       correction needed) and decode via :func:`sc_diff_decode` before
+       demapping.
+
+    Args:
+        rx: Received IQ samples (``complex128`` or castable).
+        profile: Single-carrier PHY parameters (uses ``sps``).
+        bits_per_symbol: ``1`` for BPSK or ``2`` for QPSK.
+        differential: If True, decode differentially encoded symbols
+            (phase-ambiguity-tolerant); if False, decode coherently using
+            the preamble's absolute-phase reference.
+
+    Returns:
+        Recovered payload bits as ``uint8``. Empty array if the preamble
+        lock confidence is below `SC_SYNC_THRESHOLD`.
+    """
+    signal = np.asarray(rx, dtype=np.complex128)
+    ref = preamble_wave_psk(profile)
+
+    start, peak = sc_frame_sync(signal, ref, search_span=profile.sps * 40)
+    if abs(peak) < SC_SYNC_THRESHOLD:
+        return np.array([], dtype=np.uint8)
+
+    cfo = sc_estimate_cfo_psk(signal[start : start + len(ref)], profile.sps)
+    n = np.arange(signal.size)
+    derotated: Complex = signal * np.exp(-1j * 2 * np.pi * cfo * n)
+
+    resync_span = max(2 * profile.sps, 1)
+    _, peak2 = sc_frame_sync(derotated[start:], ref, search_span=resync_span)
+    payload = derotated[start + len(ref) :]
+
+    if differential:
+        centers = payload[profile.sps // 2 :: profile.sps]
+        deltas = sc_diff_decode(centers)
+        bits: Bits = sc_demap_psk(deltas, bits_per_symbol)
+        return bits
+
+    aligned = payload * np.exp(-1j * np.angle(peak2))
+    centers = aligned[profile.sps // 2 :: profile.sps]
+    bits = sc_demap_psk(centers, bits_per_symbol)
+    return bits
