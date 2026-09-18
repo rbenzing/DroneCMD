@@ -43,6 +43,7 @@ class Detection:
     end: int
     protocol: str
     confidence: float
+    resolved_profile: Optional[str] = None
 
 
 @dataclass

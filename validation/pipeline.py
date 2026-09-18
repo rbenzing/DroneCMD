@@ -13,21 +13,19 @@ either a bare protocol name (``str``, treated as confidence 1.0) or a
 ``.confidence`` (accessed via ``getattr`` so this module never imports
 ``core.classification.ClassificationResult`` directly).
 
-Both detection and region-to-bytes demodulation are scheme-aware, driven by
-a capture's ``provenance["scheme"]`` (case-insensitive). ``"ofdm"`` uses
-:func:`default_ofdm_detector` (a moving-average power envelope tuned to
-OFDM's high PAPR) instead of the injected ``detector``, and each detected
-region is routed through :func:`ofdm_region_to_bytes`, which lazily uses the
-core OFDM receiver (:class:`core.demodulation.OFDMDemodulator`). Every other
-scheme -- FSK/GFSK/BPSK/QPSK, and unset/unrecognized (defaulted to FSK) --
-uses the injected ``detector`` and routes each region through
-:func:`single_carrier_region_to_bytes`, which lazily uses the core
-preamble-driven single-carrier receivers
-(:class:`core.demodulation.FSKDemodulator` /
-:class:`core.demodulation.PSKDemodulator`) via
-:class:`core.demodulation.DemodulationEngine`. The old self-contained inline
-FSK slicer (formerly ``region_to_bytes``) has been retired in favor of the
-core engine.
+Detection is scheme-aware, driven by a capture's ``provenance["scheme"]``
+(case-insensitive): ``"ofdm"`` selects :func:`default_ofdm_detector` (a
+moving-average power envelope tuned to OFDM's high PAPR) instead of the
+injected ``detector``. Decode is blind: each detected region is classified
+independently by :func:`core.blind.classify_family` into OFDM or
+single-carrier (provenance is not consulted), and routed to
+:func:`ofdm_region_to_bytes` (lazily uses the core OFDM receiver,
+:class:`core.demodulation.OFDMDemodulator`) or
+:func:`single_carrier_region_to_bytes` (blindly resolves the single-carrier
+profile via :func:`core.blind.resolve_sc_profile` and demodulates with the
+matching :mod:`core.single_carrier` receiver) respectively. The old
+self-contained inline FSK slicer (formerly ``region_to_bytes``) has been
+retired in favor of the core engine.
 """
 from __future__ import annotations
 
@@ -36,7 +34,7 @@ from typing import Callable, Dict, List, Optional, Protocol, Tuple, Union
 import numpy as np
 
 from core.signal_processing import detect_packets
-from validation.types import Detection, IQSamples, LabeledCapture, ModScheme
+from validation.types import Detection, IQSamples, LabeledCapture
 
 DetectorFn = Callable[[IQSamples, float, int], List[Tuple[int, int]]]
 
@@ -104,111 +102,58 @@ def default_ofdm_detector(
 
 def single_carrier_region_to_bytes(
     iq_region: IQSamples,
-    scheme: ModScheme,
     sample_rate: float,
-    sps: int = 8,
+    *,
     differential: bool = False,
     pilot_spacing: int = 0,
-) -> bytes:
-    """Demodulate a single-carrier IQ region to bytes via the core engine.
+) -> Tuple[bytes, Optional[str]]:
+    """Blindly resolve and demodulate a single-carrier region to bytes.
 
-    Lazily imports :mod:`core.demodulation` so the pipeline import path
-    stays light, mirroring :func:`ofdm_region_to_bytes`. Maps
-    :class:`~validation.types.ModScheme` (``FSK``/``GFSK``/``BPSK``/
-    ``QPSK``) to :class:`core.demodulation.ModulationScheme` (defaulting to
-    ``FSK`` for an unrecognized scheme) and runs the matching core receiver
-    (:class:`~core.demodulation.FSKDemodulator` for FSK/GFSK,
-    :class:`~core.demodulation.PSKDemodulator` for BPSK/QPSK) via
-    :class:`~core.demodulation.DemodulationEngine`. Both receivers are
-    preamble-driven and internally gate on lock confidence -- see
-    :mod:`core.single_carrier`.
-
-    The core single-carrier receivers currently decode only against the
-    fixed ``core.single_carrier.DEFAULT_SC_PROFILE`` (``sps=8``,
-    ``mod_index=0.7``, ``bt=0.5``) -- full per-capture profile threading
-    (``sps``/``mod_index``/``bt``) is deferred to a later multi-profile
-    phase. A capture actually generated at a different ``sps`` would
-    otherwise fail preamble sync silently (the preamble reference length
-    would no longer match the transmitted preamble, so the matched filter
-    in :func:`core.single_carrier.sc_frame_sync` would never lock) and this
-    function would just return ``b""`` with no indication why. To make that
-    failure loud instead, ``sps`` is validated against the default profile
-    up front and a mismatch raises ``ValueError``.
+    Runs :func:`core.blind.resolve_sc_profile` to infer the profile (sps +
+    modulation, BPSK/QPSK disambiguated) from lock confidence -- no scheme/sps
+    hint is taken from the caller. On a lock, demodulates with the resolved
+    profile via the shared PH receivers (``sc_demodulate_psk``/
+    ``sc_demodulate_fsk``). Only the *profile* is blind; ``differential`` and
+    ``pilot_spacing`` are caller-provided payload knobs (not blindly
+    detectable; the P2-SC catalog is coherent + pilotless so both default off).
 
     Args:
         iq_region: Complex baseband samples spanning one detected packet,
             including its Barker preamble near the start.
-        scheme: Single-carrier modulation scheme. OFDM is not handled here
-            -- see :func:`ofdm_region_to_bytes`.
-        sample_rate: Capture sample rate in Hz. Used only to build a
-            ``DemodConfig`` that satisfies its own ``__post_init__``
-            validity check -- the underlying single-carrier receivers
-            always demodulate against
-            ``core.single_carrier.DEFAULT_SC_PROFILE`` (``sps=8``)
-            regardless of this value or of ``differential`` below.
-        sps: Samples per symbol. Must equal
-            ``core.single_carrier.DEFAULT_SC_PROFILE.sps`` (``8``) --
-            see above -- and is otherwise used only to derive a placeholder
-            ``bitrate_bps`` for ``DemodConfig`` (see ``sample_rate`` above).
-        differential: Forwarded to ``DemodConfig.differential``; consulted
-            only by the BPSK/QPSK receiver, ignored for FSK/GFSK.
-        pilot_spacing: Forwarded to ``DemodConfig.pilot_spacing``; when > 0 the
-            coherent PSK receiver uses pilot-aided phase tracking (the capture
-            must have been modulated with the same spacing). Ignored for
-            differential PSK and FSK/GFSK.
+        sample_rate: Capture sample rate in Hz. Reserved (the blind path
+            decodes against the resolved profile directly); kept for signature
+            stability and future per-sample-rate profile scaling.
+        differential: Passed to the coherent-PSK receiver when the resolved
+            profile is PSK; ignored for FSK/GFSK.
+        pilot_spacing: Passed to the coherent-PSK receiver; > 0 selects
+            pilot-aided tracking (the capture must have used the same spacing).
 
     Returns:
-        Packed bytes (``numpy.packbits``) of the recovered (unpacked) bit
-        stream, or ``b""`` if the region is empty or demodulation failed
-        (preamble sync failure or zero bits recovered).
-
-    Raises:
-        ValueError: If ``sps`` differs from
-            ``core.single_carrier.DEFAULT_SC_PROFILE.sps`` -- non-default
-            profile captures are not yet supported by the core receivers
-            (see above), and demodulating them anyway would silently fail
-            preamble sync and return ``b""`` with no indication why.
+        ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"", None)``
+        if the region is empty or resolution/demod did not lock.
     """
-    from core.single_carrier import DEFAULT_SC_PROFILE
-
-    if sps != DEFAULT_SC_PROFILE.sps:
-        raise ValueError(
-            f"single_carrier_region_to_bytes: sps={sps} != "
-            f"DEFAULT_SC_PROFILE.sps={DEFAULT_SC_PROFILE.sps}. The core "
-            "single-carrier receivers (FSKDemodulator/PSKDemodulator) "
-            "currently decode only against DEFAULT_SC_PROFILE; captures "
-            "generated at a non-default sps are not yet supported and "
-            "would otherwise fail preamble sync silently. Full "
-            "per-capture profile threading (sps/mod_index/bt) is deferred "
-            "to a later phase."
-        )
     if len(iq_region) == 0:
-        return b""
-    from core.demodulation import DemodConfig, DemodulationEngine
-    from core.demodulation import ModulationScheme as CoreModulationScheme
+        return b"", None
+    from core.blind import resolve_sc_profile
+    from core.single_carrier import sc_demodulate_fsk, sc_demodulate_psk
 
-    scheme_map: Dict[ModScheme, CoreModulationScheme] = {
-        ModScheme.FSK: CoreModulationScheme.FSK,
-        ModScheme.GFSK: CoreModulationScheme.GFSK,
-        ModScheme.BPSK: CoreModulationScheme.BPSK,
-        ModScheme.QPSK: CoreModulationScheme.QPSK,
-    }
-    core_scheme = scheme_map.get(scheme, CoreModulationScheme.FSK)
-    bits_per_symbol = core_scheme.bits_per_symbol
-    bitrate_bps = max(1.0, sample_rate / sps * bits_per_symbol)
-    if bitrate_bps >= sample_rate / 2:
-        bitrate_bps = sample_rate / 4
-    cfg = DemodConfig(
-        scheme=core_scheme,
-        sample_rate_hz=sample_rate,
-        bitrate_bps=bitrate_bps,
-        differential=differential,
-        pilot_spacing=pilot_spacing,
-    )
-    result = DemodulationEngine(cfg).demodulate(iq_region.astype(np.complex64))
-    if not result.is_valid or len(result.bits) == 0:
-        return b""
-    return np.packbits(result.bits.astype(np.uint8)).tobytes()
+    iq_c128 = iq_region.astype(np.complex128)
+    spec, _conf = resolve_sc_profile(iq_c128)
+    if spec is None:
+        return b"", None
+    if spec.is_fsk:
+        bits = sc_demodulate_fsk(iq_c128, spec.profile, gfsk=spec.gfsk)
+    else:
+        bits = sc_demodulate_psk(
+            iq_c128,
+            spec.profile,
+            bits_per_symbol=spec.bits_per_symbol,
+            differential=differential,
+            pilot_spacing=pilot_spacing,
+        )
+    if len(bits) == 0:
+        return b"", None
+    return np.packbits(bits.astype(np.uint8)).tobytes(), spec.name
 
 
 def ofdm_region_to_bytes(iq_region: IQSamples) -> bytes:
@@ -267,11 +212,10 @@ class DetectClassifyPipeline:
             to whichever detector is selected; regions shorter than this are
             dropped (this filters out short spurious regions -- it does not
             bridge gaps between packets).
-        sps: Samples per symbol passed through to
-            :func:`single_carrier_region_to_bytes` when demodulating a
-            non-OFDM region to bytes (see that function's docstring -- the
-            core single-carrier receivers use their own fixed profile
-            regardless of this value).
+        sps: Unused by decode -- single-carrier profile resolution is now
+            blind (:func:`single_carrier_region_to_bytes` infers sps itself
+            via :func:`core.blind.resolve_sc_profile`). Retained for
+            constructor compatibility.
         use_truth_bytes: When ``True``, recover packet bytes from the
             overlapping truth region's ``provenance["payload_hex"]`` instead
             of demodulating the IQ region. Useful for isolating classifier
@@ -310,47 +254,50 @@ class DetectClassifyPipeline:
         return None
 
     def run(self, capture: LabeledCapture) -> List[Detection]:
-        """Detect and classify all packet regions in ``capture``.
+        """Detect packet regions, then blindly resolve + classify each.
 
-        Args:
-            capture: Labeled capture to run detection + classification over.
-
-        Returns:
-            One :class:`~validation.types.Detection` per detected region, in
-            detection order.
+        Detector selection still keys on ``provenance["scheme"]`` (OFDM
+        envelope vs energy detector -- detection is scored separately against
+        truth). Decode routing is blind: each region is classified by
+        :func:`core.blind.classify_family` into OFDM or single-carrier and the
+        resolved profile is recorded on the :class:`Detection`. ``differential``
+        /``pilot_spacing`` are read from provenance as caller payload knobs.
         """
-        scheme_str = str(capture.provenance.get("scheme", "")).lower()
-        is_ofdm = scheme_str == "ofdm"
-        detector = self.ofdm_detector if is_ofdm else self.detector
+        from core.blind import classify_family
+        from core.profiles import Family
+
+        scheme_hint = str(capture.provenance.get("scheme", "")).lower()
+        detector = self.ofdm_detector if scheme_hint == "ofdm" else self.detector
         regions = detector(capture.iq, self.threshold, self.min_gap)
-        sc_scheme = ModScheme.FSK
-        if not is_ofdm:
-            try:
-                sc_scheme = ModScheme(scheme_str)
-            except ValueError:
-                sc_scheme = ModScheme.FSK
         differential = bool(capture.provenance.get("differential", False))
         pilot_spacing = int(capture.provenance.get("pilot_spacing", 0))
         detections: List[Detection] = []
         for start, end in regions:
+            region = capture.iq[start:end]
+            resolved: Optional[str] = None
             if self.use_truth_bytes:
                 pkt = self._truth_bytes(capture, start, end) or b""
-            elif is_ofdm:
-                pkt = ofdm_region_to_bytes(capture.iq[start:end])
             else:
-                pkt = single_carrier_region_to_bytes(
-                    capture.iq[start:end],
-                    sc_scheme,
-                    capture.sample_rate,
-                    sps=self.sps,
-                    differential=differential,
-                    pilot_spacing=pilot_spacing,
-                )
+                family, _ = classify_family(region.astype(np.complex128))
+                if family == Family.OFDM:
+                    pkt = ofdm_region_to_bytes(region)
+                    resolved = "wifi_20" if pkt else None
+                else:
+                    pkt, resolved = single_carrier_region_to_bytes(
+                        region,
+                        capture.sample_rate,
+                        differential=differential,
+                        pilot_spacing=pilot_spacing,
+                    )
             result = self.classifier.classify(pkt, None)
             proto, conf = _protocol_and_confidence(result)
             detections.append(
                 Detection(
-                    start=int(start), end=int(end), protocol=proto, confidence=conf
+                    start=int(start),
+                    end=int(end),
+                    protocol=proto,
+                    confidence=conf,
+                    resolved_profile=resolved,
                 )
             )
         return detections

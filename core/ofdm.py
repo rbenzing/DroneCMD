@@ -82,7 +82,21 @@ DEFAULT_OFDM_PROFILE = _build_default_profile()
 # timing search found no reliable STF -- either noise, or a spurious
 # correlation elsewhere in the payload -- and the recovered bits should not
 # be trusted.
-OFDM_SYNC_THRESHOLD = 0.5
+#
+# 0.5 alone is unsafe under blind routing: a low-SNR single-carrier region
+# (FSK/GFSK) blindly misrouted to the OFDM decoder by
+# `core.blind.classify_family` can score above 0.5 on this S&C metric, so 0.5
+# would let it decode garbage. 0.8 (a prior attempt) needlessly rejects
+# genuine OFDM below ~10 dB. 0.6 is a data-driven midpoint: it fails closed on
+# the common misroute cases while preserving genuine OFDM sync to ~6-8 dB
+# (OFDM S&C ~0.64 at 6 dB, ~0.75 at 8 dB). NOTE: at very low SNR (<=~5 dB) the
+# misrouted-single-carrier and genuine-OFDM S&C distributions OVERLAP (~0.55-
+# 0.65), so no single scalar threshold is airtight -- a small residual tail
+# (~0.1% of misrouted low-SNR regions) can still leak garbage. That is inherent
+# to blind family discrimination at the noise floor (where the whole chain is
+# unreliable) and is measured by the profile-ID/BER metrics, not a hard
+# guarantee. The loud-failure guarantee holds at normal operating SNR.
+OFDM_SYNC_THRESHOLD = 0.6
 
 
 def qpsk_map(bits: Bits) -> Complex:
