@@ -64,3 +64,13 @@ def test_crc_frame_roundtrip_and_detects_error() -> None:
     bad[3] ^= 1
     _, ok2 = check_and_strip_crc(bad)
     assert ok2 is False  # loud: corruption detected
+
+
+def test_interleaver_roundtrip_bits_and_llrs() -> None:
+    from core.coding import deinterleave, interleave
+
+    for depth in (0, 1, 4, 7):
+        b = np.arange(20, dtype=np.uint8) % 2
+        assert np.array_equal(deinterleave(interleave(b, depth), depth), b)
+        llr = np.linspace(-3, 3, 20).astype(np.float64)
+        assert np.allclose(deinterleave(interleave(llr, depth), depth), llr)

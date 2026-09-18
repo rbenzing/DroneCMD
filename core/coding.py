@@ -200,3 +200,47 @@ def check_and_strip_crc(frame_bits: Bits) -> Tuple[Bits, bool]:
     payload, crc = f[:-16], f[-16:]
     ok = bool(np.array_equal(crc, crc16_ccitt(payload)))
     return payload.astype(np.uint8), ok
+
+
+# Default block-interleaver depth for profile-carried coding.
+CODING_INTERLEAVE_DEPTH = 8
+
+
+def _perm(n: int, depth: int) -> npt.NDArray[np.intp]:
+    """Compute permutation indices for rectangular block interleaver."""
+    if depth <= 1:
+        return np.arange(n, dtype=np.intp)
+    rows = int(np.ceil(n / depth))
+    idx = np.arange(rows * depth, dtype=np.intp).reshape(rows, depth).T.reshape(-1)
+    return idx[idx < n]
+
+
+def interleave(x: "npt.NDArray[np.generic]", depth: int) -> "npt.NDArray[np.generic]":
+    """Interleave array x using rectangular block interleaver at given depth.
+
+    Args:
+        x: Input array (bits, LLRs, or other numeric types).
+        depth: Interleaver depth; depth <= 1 is identity.
+
+    Returns:
+        Interleaved array with same shape and dtype as x.
+    """
+    a = np.asarray(x)
+    return a[_perm(a.size, depth)]
+
+
+def deinterleave(x: "npt.NDArray[np.generic]", depth: int) -> "npt.NDArray[np.generic]":
+    """Deinterleave array x using rectangular block deinterleaver at given depth.
+
+    Args:
+        x: Input array (bits, LLRs, or other numeric types).
+        depth: Deinterleaver depth; depth <= 1 is identity.
+
+    Returns:
+        Deinterleaved array with same shape and dtype as x.
+    """
+    a = np.asarray(x)
+    p = _perm(a.size, depth)
+    out = np.empty_like(a)
+    out[p] = a
+    return out
