@@ -411,3 +411,66 @@ def sc_demodulate_psk(
     centers = aligned[profile.sps // 2 :: profile.sps]
     bits = sc_demap_psk(centers, bits_per_symbol)
     return bits
+
+
+def sc_demodulate_fsk(rx: Complex, profile: SCProfile, *, gfsk: bool) -> Bits:
+    """Non-coherent (G)FSK receiver: preamble sync, discriminator, bit slice.
+
+    Pipeline:
+
+    1. Locate the preamble via :func:`sc_frame_sync`; bail out (empty
+       result) if the lock confidence is below `SC_SYNC_THRESHOLD`.
+    2. Recover instantaneous frequency from the payload by differentiating
+       the unwrapped instantaneous phase (an FM discriminator) -- the same
+       technique ``validation.pipeline.region_to_bytes`` and the synthetic
+       ``_fsk`` modulator use, so transmit and receive agree.
+    3. Because FSK/GFSK detection is non-coherent, a fixed zero threshold
+       would be biased by any uncompensated carrier frequency offset (CFO)
+       or DC-coupled discriminator bias. Instead, threshold adaptively at
+       the mean instantaneous frequency over the whole payload: since the
+       synth's NRZ symbol stream is (approximately) zero-mean, the payload
+       mean frequency estimates exactly that bias/CFO term, and subtracting
+       it recenters the two FSK tones symmetrically around zero. Per
+       symbol, average frequency over the inner half of the ``sps``-sample
+       window (the pulse-shaped GFSK edges are least reliable) and compare
+       to the adaptive threshold.
+    4. Direction convention matches the synth ``_fsk`` mapping
+       (``symbols = 2*bits - 1``): bit ``1`` -> symbol ``+1`` -> higher
+       instantaneous frequency, so ``bit = mean_inner_f > threshold``.
+
+    Args:
+        rx: Received IQ samples (``complex128`` or castable).
+        profile: Single-carrier PHY parameters (uses ``sps``; ``mod_index``
+            and ``bt`` only affect the preamble reference waveform used for
+            sync, not the discriminator itself).
+        gfsk: If True, use the GFSK preamble reference for sync (must match
+            the transmitter's pulse shaping); if False, use the plain FSK
+            preamble reference.
+
+    Returns:
+        Recovered payload bits as ``uint8``. Empty array if the preamble
+        lock confidence is below `SC_SYNC_THRESHOLD` or the payload is
+        shorter than one symbol.
+    """
+    signal = np.asarray(rx, dtype=np.complex128)
+    ref = preamble_wave_fsk(profile, gfsk=gfsk)
+
+    start, peak = sc_frame_sync(signal, ref, search_span=profile.sps * 40)
+    if abs(peak) < SC_SYNC_THRESHOLD:
+        return np.array([], dtype=np.uint8)
+
+    payload = signal[start + len(ref) :]
+    sps = profile.sps
+    n_sym = payload.size // sps
+    if n_sym <= 0:
+        return np.array([], dtype=np.uint8)
+
+    phase = np.unwrap(np.angle(payload))
+    inst_freq = np.diff(phase, prepend=phase[0])
+    threshold = float(np.mean(inst_freq))
+
+    bits: Bits = np.zeros(n_sym, dtype=np.uint8)
+    for k in range(n_sym):
+        seg = inst_freq[k * sps + sps // 4 : k * sps + 3 * sps // 4]
+        bits[k] = 1 if float(np.mean(seg)) > threshold else 0
+    return bits
