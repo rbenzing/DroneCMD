@@ -77,7 +77,9 @@ def test_pipeline_routes_ofdm_scheme_to_ofdm_demod(monkeypatch) -> None:
     monkeypatch.setattr(
         P,
         "ofdm_region_to_bytes",
-        lambda iq: (calls.__setitem__("ofdm", calls["ofdm"] + 1) or b"\x01"),
+        lambda iq: (
+            calls.__setitem__("ofdm", calls["ofdm"] + 1) or (b"\x01", "wifi_20")
+        ),
     )
     monkeypatch.setattr(
         P,
@@ -107,7 +109,9 @@ def test_pipeline_non_ofdm_scheme_uses_single_carrier_path(monkeypatch) -> None:
     monkeypatch.setattr(
         P,
         "ofdm_region_to_bytes",
-        lambda iq: (calls.__setitem__("ofdm", calls["ofdm"] + 1) or b"\x01"),
+        lambda iq: (
+            calls.__setitem__("ofdm", calls["ofdm"] + 1) or (b"\x01", "wifi_20")
+        ),
     )
     monkeypatch.setattr(
         P,
@@ -287,5 +291,57 @@ def test_ofdm_decode_fails_closed_on_misrouted_sc_region() -> None:
 
     sc = modulate(bytes(range(24)), ModScheme.FSK, sps=8, mod_index=0.7)
     noisy, _, _ = add_awgn_at_snr(sc.astype(np.complex64), 5.0, rng(0))
-    out = ofdm_region_to_bytes(noisy.astype(np.complex64))
+    out, resolved = ofdm_region_to_bytes(noisy.astype(np.complex64))
     assert out == b""  # OFDM demod fails closed on a misrouted SC region
+    assert resolved is None
+
+
+def test_ofdm_region_to_bytes_blind_returns_name() -> None:
+    import numpy as np
+
+    from core.ofdm import modulate_ofdm
+    from core.profiles import OFDM_CATALOG
+    from validation.pipeline import ofdm_region_to_bytes
+
+    for name in ("wifi_20", "wifi_40"):
+        rx = modulate_ofdm(
+            np.array([1, 0, 1, 1, 0, 0, 1, 0] * 12, dtype=np.uint8), OFDM_CATALOG[name]
+        )
+        pkt, resolved = ofdm_region_to_bytes(rx.astype(np.complex64))
+        assert resolved == name
+        assert len(pkt) > 0
+
+
+def test_ofdm_region_to_bytes_noise_is_loud_none() -> None:
+    import numpy as np
+
+    from validation.pipeline import ofdm_region_to_bytes
+    from validation.repro import rng
+
+    g = rng(9)
+    noise = (g.standard_normal(4 * 80) + 1j * g.standard_normal(4 * 80)).astype(
+        np.complex64
+    )
+    pkt, resolved = ofdm_region_to_bytes(noise)
+    assert pkt == b"" and resolved is None
+
+
+def test_pipeline_records_resolved_ofdm_profile() -> None:
+    from validation import create_synth_dataset
+    from validation.pipeline import DetectClassifyPipeline
+
+    ds = create_synth_dataset(
+        protocols=["wide"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        profile_by_protocol={"wide": "wifi_40"},
+        seed=5,
+    )
+
+    class _Clf:
+        def classify(self, packet_bytes: bytes, signal_metrics=None) -> str:
+            return "wide"
+
+    pipe = DetectClassifyPipeline(_Clf())
+    dets = pipe.run(next(iter(ds)))
+    assert any(d.resolved_profile == "wifi_40" for d in dets)

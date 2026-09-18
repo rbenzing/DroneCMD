@@ -19,8 +19,9 @@ moving-average power envelope tuned to OFDM's high PAPR) instead of the
 injected ``detector``. Decode is blind: each detected region is classified
 independently by :func:`core.blind.classify_family` into OFDM or
 single-carrier (provenance is not consulted), and routed to
-:func:`ofdm_region_to_bytes` (lazily uses the core OFDM receiver,
-:class:`core.demodulation.OFDMDemodulator`) or
+:func:`ofdm_region_to_bytes` (blindly resolves the OFDM profile via
+:func:`core.blind.resolve_ofdm_profile` and demodulates with the matching
+:func:`core.ofdm.demodulate_ofdm` receiver) or
 :func:`single_carrier_region_to_bytes` (blindly resolves the single-carrier
 profile via :func:`core.blind.resolve_sc_profile` and demodulates with the
 matching :mod:`core.single_carrier` receiver) respectively. The old
@@ -156,30 +157,38 @@ def single_carrier_region_to_bytes(
     return np.packbits(bits.astype(np.uint8)).tobytes(), spec.name
 
 
-def ofdm_region_to_bytes(iq_region: IQSamples) -> bytes:
-    """Demodulate an OFDM region to bytes via the core OFDM receiver.
+def ofdm_region_to_bytes(iq_region: IQSamples) -> Tuple[bytes, Optional[str]]:
+    """Blindly resolve the OFDM profile of a region, then demodulate with it.
 
-    Lazily imports :mod:`core.demodulation` so the pipeline import path stays
-    light. Returns ``b""`` on an empty region or an invalid demod result.
+    Mirrors :func:`single_carrier_region_to_bytes`: resolution and decode use
+    the ``core`` PHY directly (not the fixed-profile production
+    :class:`core.demodulation.OFDMDemodulator`). Returns ``(packed_bytes,
+    resolved_name)`` on a lock, or ``(b"", None)`` on an empty region or when
+    the blind resolver reports no trustworthy OFDM lock.
 
     Args:
         iq_region: Complex baseband samples spanning one detected OFDM
             packet, including its STF+LTF preamble near the start.
 
     Returns:
-        Packed bytes (``numpy.packbits``) of the recovered bit stream, or
-        ``b""`` if the region is empty or the OFDM demod could not recover a
-        valid burst.
+        ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"",
+        None)`` if the region is empty, the blind resolver did not lock, or
+        the demod yielded no bits.
     """
     if len(iq_region) == 0:
-        return b""
-    from core.demodulation import DemodConfig, ModulationScheme, OFDMDemodulator
+        return b"", None
+    from core.blind import resolve_ofdm_profile
+    from core.ofdm import demodulate_ofdm
+    from core.profiles import OFDM_CATALOG
 
-    cfg = DemodConfig(scheme=ModulationScheme.OFDM)
-    result = OFDMDemodulator(cfg).demodulate(iq_region.astype(np.complex64))
-    if not result.is_valid or len(result.bits) == 0:
-        return b""
-    return np.packbits(result.bits.astype(np.uint8)).tobytes()
+    iq_c128 = iq_region.astype(np.complex128)
+    name, _ = resolve_ofdm_profile(iq_c128)
+    if name is None:
+        return b"", None
+    bits = demodulate_ofdm(iq_c128, OFDM_CATALOG[name])
+    if len(bits) == 0:
+        return b"", None
+    return np.packbits(bits.astype(np.uint8)).tobytes(), name
 
 
 def _protocol_and_confidence(result: Union[str, object]) -> Tuple[str, float]:
@@ -280,8 +289,7 @@ class DetectClassifyPipeline:
             else:
                 family, _ = classify_family(region.astype(np.complex128))
                 if family == Family.OFDM:
-                    pkt = ofdm_region_to_bytes(region)
-                    resolved = "wifi_20" if pkt else None
+                    pkt, resolved = ofdm_region_to_bytes(region)
                 else:
                     pkt, resolved = single_carrier_region_to_bytes(
                         region,
