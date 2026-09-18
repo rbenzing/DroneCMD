@@ -503,6 +503,20 @@ def sc_pilot_correct(symbols: Complex, pilot_spacing: int) -> Complex:
     derotates the whole stream. The caller then strips the pilots
     (:func:`sc_strip_pilots`) and demaps the payload.
 
+    A detected region can over-extend past the true payload into trailing
+    guard noise (real detectors are not exact), and a noise sample can by
+    chance land on the fixed pilot comb (:func:`sc_pilot_positions`). Unlike
+    real pilots -- transmitted at unit amplitude, same as payload symbols --
+    such a noise "pilot" sits far below the signal level. Naively including it
+    would feed a near-random phase into ``np.interp``, and because ``np.interp``
+    is non-causal (each pilot's phase is spread backward to every preceding
+    symbol index up to the prior pilot too), that garbage sample would corrupt
+    genuine trailing PAYLOAD symbols, not just itself. This guards against that
+    by rejecting comb positions whose center magnitude is far below a robust
+    signal-level estimate (the median magnitude over the whole stream) before
+    interpolating; a rejected trailing region is then simply edge-held past the
+    last surviving (real) pilot instead of interpolated toward garbage.
+
     Args:
         symbols: Interleaved payload + pilot symbols at symbol centers
             (``complex128``).
@@ -516,6 +530,14 @@ def sc_pilot_correct(symbols: Complex, pilot_spacing: int) -> Complex:
     if pilot_spacing <= 0 or data.size == 0:
         return data
     pilots = sc_pilot_positions(data.size, pilot_spacing)
+    if pilots.size == 0:
+        return data
+    # Magnitude gate: real pilots sit at the signal level; a noise-tail
+    # center landing on the comb (e.g. from an over-extended detected
+    # region) sits far below it and must not be treated as a pilot.
+    mag = np.abs(data[pilots])
+    ref_level = float(np.median(np.abs(data)))
+    pilots = pilots[mag >= 0.5 * ref_level]
     if pilots.size == 0:
         return data
     pilot_phase = np.unwrap(np.angle(data[pilots]))

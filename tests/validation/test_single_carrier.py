@@ -623,14 +623,17 @@ def test_psk_wide_cfo_acquire() -> None:
 
     b = _bits(DATA)
     for differential in (False, True):
-        rx = _psk_burst(b, bps=2, differential=differential).astype(np.complex128)
-        n = np.arange(len(rx))
-        # ~0.015 cyc/sample: ~5x beyond PE's ~0.0029 ceiling, inside SC_CFO_RANGE.
-        rx = rx * np.exp(1j * 2 * np.pi * 0.015 * n)
-        rec = sc_demodulate_psk(
-            rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=differential
-        )
-        assert np.array_equal(rec[: len(b)], b)
+        for cfo in (0.015, -0.015):
+            rx = _psk_burst(b, bps=2, differential=differential).astype(np.complex128)
+            n = np.arange(len(rx))
+            # ~0.015 cyc/sample: ~5x beyond PE's ~0.0029 ceiling, inside
+            # SC_CFO_RANGE; both signs, since acquisition must not be biased
+            # toward positive CFO.
+            rx = rx * np.exp(1j * 2 * np.pi * cfo * n)
+            rec = sc_demodulate_psk(
+                rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=differential
+            )
+            assert np.array_equal(rec[: len(b)], b)
 
 
 def test_fsk_wide_cfo_acquire() -> None:
@@ -638,11 +641,12 @@ def test_fsk_wide_cfo_acquire() -> None:
 
     b = _bits(DATA)
     for gfsk in (False, True):
-        rx = _fsk_burst(b, gfsk=gfsk).astype(np.complex128)
-        n = np.arange(len(rx))
-        rx = rx * np.exp(1j * 2 * np.pi * 0.015 * n)
-        rec = sc_demodulate_fsk(rx, DEFAULT_SC_PROFILE, gfsk=gfsk)
-        assert np.array_equal(rec[: len(b)], b)
+        for cfo in (0.015, -0.015):
+            rx = _fsk_burst(b, gfsk=gfsk).astype(np.complex128)
+            n = np.arange(len(rx))
+            rx = rx * np.exp(1j * 2 * np.pi * cfo * n)
+            rec = sc_demodulate_fsk(rx, DEFAULT_SC_PROFILE, gfsk=gfsk)
+            assert np.array_equal(rec[: len(b)], b)
 
 
 def test_dd_tracks_linear_phase_drift() -> None:
@@ -776,3 +780,59 @@ def test_pilot_spacing_zero_matches_pe_path() -> None:
         rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False, pilot_spacing=0
     )
     assert np.array_equal(a, c)
+
+
+def test_pilot_aided_survives_trailing_noise() -> None:
+    # A detected region can extend past the true payload into guard noise.
+    # A trailing noise center must NOT be mistaken for a pilot and corrupt
+    # real payload (the non-causal-interp bug the magnitude gate fixes).
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(bytes(range(24)))
+    rx = _psk_burst_pilots(b, bps=2, pilot_spacing=8)
+    rng = np.random.default_rng(7)
+    # >= 1 full symbol (sps=8) of low-level noise appended (signal is unit
+    # amplitude; tail ~1/10 that), landing a spurious center on a comb slot.
+    tail = 0.1 * (
+        rng.standard_normal(2 * DEFAULT_SC_PROFILE.sps)
+        + 1j * rng.standard_normal(2 * DEFAULT_SC_PROFILE.sps)
+    )
+    rx = np.concatenate([rx, tail.astype(np.complex128)])
+    rec = sc_demodulate_psk(
+        rx,
+        DEFAULT_SC_PROFILE,
+        bits_per_symbol=2,
+        differential=False,
+        pilot_spacing=8,
+    )
+    assert np.array_equal(rec[: len(b)], b)
+
+
+def test_coherent_qpsk_ber_monotonic_across_snr() -> None:
+    # DD tracking (pilot_spacing=0) should give a cleanly non-increasing
+    # BER-vs-SNR curve for coherent QPSK -- the PE mid-SNR wobble is gone.
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+    from validation.repro import rng as make_rng
+    from validation.synth.channel import add_awgn_at_snr
+
+    p = DEFAULT_SC_PROFILE
+    b = _bits(DATA)
+    snrs = [5.0, 10.0, 15.0, 20.0, 25.0]
+    mean_ber = []
+    for snr in snrs:
+        err = 0.0
+        for seed in range(12):
+            rx = _psk_burst(b, bps=2, differential=False).astype(np.complex128)
+            noisy, _, _ = add_awgn_at_snr(rx.astype(np.complex64), snr, make_rng(seed))
+            rec = sc_demodulate_psk(
+                noisy.astype(np.complex128),
+                p,
+                bits_per_symbol=2,
+                differential=False,
+            )
+            err += float(np.mean(rec[: len(b)] != b))
+        mean_ber.append(err / 12)
+    # Non-increasing within a small tolerance, and exact at high SNR.
+    for lo, hi in zip(mean_ber, mean_ber[1:]):
+        assert hi <= lo + 0.02
+    assert mean_ber[-1] == 0.0
