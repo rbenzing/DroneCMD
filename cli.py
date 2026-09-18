@@ -425,6 +425,11 @@ For more information, see the documentation.
         '--differential', action='store_true',
         help='Use differential encoding (DBPSK/DQPSK) for PSK schemes',
     )
+    v_synth.add_argument(
+        '--pilot-spacing', type=int, default=0,
+        help='Insert a known pilot every N coherent-PSK payload symbols for '
+             'pilot-aided phase tracking (0 = pilotless, the default)',
+    )
 
     v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
     v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
@@ -964,11 +969,30 @@ def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput
         raise CLIError(f"Training failed: {e}")
 
 
+def _default_synth_scheme(protocol):
+    """Map a protocol name to its default synthetic modulation scheme.
+
+    Known protocols keep their explicit scheme; anything else falls back to
+    GFSK -- the most common controllable-drone C2/telemetry modulation (RC
+    links, SiK/MAVLink, BLE) and the framework's default single-carrier
+    scheme, chosen over raw FSK as the real-world norm.
+    """
+    from validation import ModScheme
+
+    known = {
+        "mavlink": ModScheme.FSK,
+        "dji": ModScheme.QPSK,
+        "ocusync": ModScheme.OFDM,
+        "bpsk_link": ModScheme.BPSK,
+    }
+    return known.get(protocol, ModScheme.GFSK)
+
+
 def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
     """Handle validate command — synth/ingest datasets or run the T&E harness."""
     import numpy as np
     from validation import (
-        create_synth_dataset, create_pipeline, evaluate, LabeledDataset, ModScheme,
+        create_synth_dataset, create_pipeline, evaluate, LabeledDataset,
     )
     from validation.report import write_report
 
@@ -978,17 +1002,12 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
             lo, hi, step = (float(x) for x in args.snr.split(':'))
             grid = list(np.arange(lo, hi + step / 2, step))
             protocols = [p.strip() for p in args.protocols.split(',')]
-            default_scheme = {
-                "mavlink": ModScheme.FSK,
-                "dji": ModScheme.QPSK,
-                "ocusync": ModScheme.OFDM,
-                "bpsk_link": ModScheme.BPSK,
-            }
-            scheme_by_protocol = {p: default_scheme.get(p, ModScheme.FSK) for p in protocols}
+            scheme_by_protocol = {p: _default_synth_scheme(p) for p in protocols}
             ds = create_synth_dataset(
                 protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
                 scheme_by_protocol=scheme_by_protocol, seed=args.seed,
                 differential=args.differential,
+                pilot_spacing=args.pilot_spacing,
             )
             ds.write(Path(args.out))
             output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")

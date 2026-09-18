@@ -31,3 +31,17 @@ def test_end_to_end_public_api():
     result = evaluate(ds, pipe, seed=3)
     assert isinstance(result, RunResult)
     assert result.manifest.dataset_hash
+
+
+def test_default_synth_scheme_gfsk_fallback() -> None:
+    from cli import _default_synth_scheme
+    from validation.types import ModScheme
+
+    # Known protocols keep their explicit scheme.
+    assert _default_synth_scheme("ocusync") == ModScheme.OFDM
+    assert _default_synth_scheme("bpsk_link") == ModScheme.BPSK
+    assert _default_synth_scheme("dji") == ModScheme.QPSK
+    assert _default_synth_scheme("mavlink") == ModScheme.FSK
+    # Unknown protocol falls back to GFSK (the default single-carrier scheme),
+    # not raw FSK.
+    assert _default_synth_scheme("some_new_link") == ModScheme.GFSK
