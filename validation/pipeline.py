@@ -108,6 +108,7 @@ def single_carrier_region_to_bytes(
     sample_rate: float,
     sps: int = 8,
     differential: bool = False,
+    pilot_spacing: int = 0,
 ) -> bytes:
     """Demodulate a single-carrier IQ region to bytes via the core engine.
 
@@ -151,6 +152,10 @@ def single_carrier_region_to_bytes(
             ``bitrate_bps`` for ``DemodConfig`` (see ``sample_rate`` above).
         differential: Forwarded to ``DemodConfig.differential``; consulted
             only by the BPSK/QPSK receiver, ignored for FSK/GFSK.
+        pilot_spacing: Forwarded to ``DemodConfig.pilot_spacing``; when > 0 the
+            coherent PSK receiver uses pilot-aided phase tracking (the capture
+            must have been modulated with the same spacing). Ignored for
+            differential PSK and FSK/GFSK.
 
     Returns:
         Packed bytes (``numpy.packbits``) of the recovered (unpacked) bit
@@ -198,6 +203,7 @@ def single_carrier_region_to_bytes(
         sample_rate_hz=sample_rate,
         bitrate_bps=bitrate_bps,
         differential=differential,
+        pilot_spacing=pilot_spacing,
     )
     result = DemodulationEngine(cfg).demodulate(iq_region.astype(np.complex64))
     if not result.is_valid or len(result.bits) == 0:
@@ -324,6 +330,7 @@ class DetectClassifyPipeline:
             except ValueError:
                 sc_scheme = ModScheme.FSK
         differential = bool(capture.provenance.get("differential", False))
+        pilot_spacing = int(capture.provenance.get("pilot_spacing", 0))
         detections: List[Detection] = []
         for start, end in regions:
             if self.use_truth_bytes:
@@ -337,6 +344,7 @@ class DetectClassifyPipeline:
                     capture.sample_rate,
                     sps=self.sps,
                     differential=differential,
+                    pilot_spacing=pilot_spacing,
                 )
             result = self.classifier.classify(pkt, None)
             proto, conf = _protocol_and_confidence(result)

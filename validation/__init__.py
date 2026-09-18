@@ -48,6 +48,7 @@ def create_synth_dataset(
     seed: int = 42,
     payload_len: int = 32,
     differential: bool = False,
+    pilot_spacing: int = 0,
 ) -> LabeledDataset:
     """Create a synthetic labeled dataset for validation.
 
@@ -61,6 +62,9 @@ def create_synth_dataset(
         payload_len: Payload length in bytes (default 32).
         differential: If True, differentially encode BPSK/QPSK payloads
             (default False). Ignored by FSK/GFSK/OFDM schemes.
+        pilot_spacing: If > 0, interleave known pilots into coherent BPSK/QPSK
+            payloads for pilot-aided phase tracking (default 0 = pilotless).
+            Ignored by differential PSK and FSK/GFSK/OFDM.
 
     Returns:
         A LabeledDataset instance.
@@ -74,6 +78,7 @@ def create_synth_dataset(
         scheme_by_protocol=scheme_by_protocol,
         payload_len=payload_len,
         differential=differential,
+        pilot_spacing=pilot_spacing,
     )
     return LabeledDataset(build_scenario(spec))
 

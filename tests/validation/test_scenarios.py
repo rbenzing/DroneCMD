@@ -66,3 +66,20 @@ def test_differential_bpsk_dataset_records_provenance():
     for c in ds:
         assert c.provenance["scheme"] == "bpsk"
         assert c.provenance["differential"] is True
+
+
+def test_build_scenario_records_pilot_spacing() -> None:
+    from validation.synth.scenarios import DatasetSpec, build_scenario
+    from validation.types import ModScheme
+
+    spec = DatasetSpec(
+        protocols=["qpsk_link"],
+        snr_grid_db=[30.0],
+        n_per_cell=1,
+        sample_rate=2_048_000.0,
+        seed=1,
+        scheme_by_protocol={"qpsk_link": ModScheme.QPSK},
+        pilot_spacing=8,
+    )
+    caps = build_scenario(spec)
+    assert caps[0].provenance["pilot_spacing"] == 8

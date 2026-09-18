@@ -45,6 +45,10 @@ class DatasetSpec:
             (passed through to :func:`modulate` and recorded in each
             capture's ``provenance["differential"]``). Ignored by FSK/GFSK/
             OFDM schemes.
+        pilot_spacing: If > 0, interleave known pilots into coherent BPSK/QPSK
+            payloads (passed through to :func:`modulate` and recorded in each
+            capture's ``provenance["pilot_spacing"]``) for pilot-aided phase
+            tracking. Ignored by differential PSK and FSK/GFSK/OFDM.
     """
 
     protocols: List[str]
@@ -57,6 +61,7 @@ class DatasetSpec:
     guard: int = 512
     sps: int = 8
     differential: bool = False
+    pilot_spacing: int = 0
 
 
 def _noise(n: int, std: float, generator: np.random.Generator) -> IQSamples:
@@ -95,7 +100,11 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                     0, 256, size=spec.payload_len, dtype=np.uint8
                 ).tobytes()
                 clean = modulate(
-                    payload, scheme, sps=spec.sps, differential=spec.differential
+                    payload,
+                    scheme,
+                    sps=spec.sps,
+                    differential=spec.differential,
+                    pilot_spacing=spec.pilot_spacing,
                 )
                 noisy_pkt, noise_std, achieved = add_awgn_at_snr(clean, snr, g)
                 pre = _noise(spec.guard, noise_std, g)
@@ -117,6 +126,7 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                             "payload_hex": payload.hex(),
                             "seed": spec.seed,
                             "differential": spec.differential,
+                            "pilot_spacing": spec.pilot_spacing,
                         },
                     )
                 )

@@ -75,7 +75,7 @@ def test_pipeline_routes_ofdm_scheme_to_ofdm_demod(monkeypatch) -> None:
     monkeypatch.setattr(
         P,
         "single_carrier_region_to_bytes",
-        lambda iq, scheme, sample_rate, sps=8, differential=False: (
+        lambda iq, scheme, sample_rate, sps=8, differential=False, pilot_spacing=0: (
             calls.__setitem__("sc", calls["sc"] + 1) or b"\x02"
         ),
     )
@@ -110,7 +110,7 @@ def test_pipeline_non_ofdm_scheme_uses_single_carrier_path(monkeypatch) -> None:
     monkeypatch.setattr(
         P,
         "single_carrier_region_to_bytes",
-        lambda iq, scheme, sample_rate, sps=8, differential=False: (
+        lambda iq, scheme, sample_rate, sps=8, differential=False, pilot_spacing=0: (
             calls.__setitem__("sc", calls["sc"] + 1) or b"\x02"
         ),
     )
@@ -228,3 +228,18 @@ def test_single_carrier_region_to_bytes_rejects_nondefault_sps() -> None:
     iq = np.ones(400, dtype=np.complex64)
     with pytest.raises(ValueError, match="sps"):
         single_carrier_region_to_bytes(iq, ModScheme.BPSK, 1e6, sps=4)
+
+
+def test_pipeline_roundtrip_with_pilots() -> None:
+    # A piloted QPSK capture demodulates back to its payload through the
+    # pipeline's single-carrier path (pilot_spacing read from provenance).
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    data = bytes(range(24))
+    rx = modulate(data, ModScheme.QPSK, sps=8, pilot_spacing=8)
+    out = single_carrier_region_to_bytes(
+        rx, ModScheme.QPSK, 2_048_000.0, sps=8, pilot_spacing=8
+    )
+    assert out[: len(data)] == data
