@@ -134,3 +134,11 @@ def test_build_scenario_ofdm_profile_provenance() -> None:
     assert by_proto["wide"]["profile"] == "wifi_40"
     assert by_proto["wide"]["scheme"] == "ofdm"
     assert by_proto["narrow"]["profile"] == "ofdm_nb"
+    assert by_proto["narrow"]["scheme"] == "ofdm"
+    # Prove the profile drives modulation: different profiles yield different spans.
+    caps = {c.provenance["protocol"]: c for c in ds}
+    wide_truth = caps["wide"].truth_regions[0]
+    narrow_truth = caps["narrow"].truth_regions[0]
+    wide_span = wide_truth[1] - wide_truth[0]
+    narrow_span = narrow_truth[1] - narrow_truth[0]
+    assert wide_span != narrow_span

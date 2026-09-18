@@ -289,13 +289,28 @@ def ofdm_equalized_symbols(
     x = np.asarray(rx, dtype=np.complex128)
     if len(x) < 2 * slen:
         return np.zeros(0, dtype=np.complex128)
+    # 1. Coarse timing = argmax of the S&C metric (max of the S&C metric).
+    # The true STF boundary sits within the metric's flat-topped plateau
+    # (the metric stays near-peak for a range of `d` around the exact
+    # boundary), so `d_body` lands somewhere on that plateau rather than
+    # necessarily the exact sample; the residual offset is within the
+    # cyclic prefix and is absorbed by the LTF-based channel estimate below
+    # rather than causing inter-symbol interference.
+    # The acquisition search is bounded to one symbol length from the start
+    # of the buffer: any real receiver only searches a burst's *known*
+    # approximate start for a bounded timing/propagation uncertainty rather
+    # than the whole capture, and doing so here also keeps a low-SNR noise
+    # excursion elsewhere in the payload from hijacking the global argmax
+    # away from the true (but noisy) preamble peak.
     metric, p = _sc_metric(x, half)
     if metric.size == 0:
         return np.zeros(0, dtype=np.complex128)
     search_span = min(len(metric), slen)
     d_body = int(np.argmax(metric[:search_span]))
+    # 2. Fractional CFO from the STF half-symbol phase; derotate the burst.
     df = float(np.angle(p[d_body])) / (2.0 * np.pi * half)
     x = x * np.exp(-1j * 2.0 * np.pi * df * np.arange(len(x)))
+    # 3. LS channel estimate from the LTF body (one symbol after the STF body).
     occ_bins = _bins(profile, profile.occupied_carriers)
     _, ltf_known = _ltf_freq(profile)
     ltf_start = d_body + slen
@@ -309,6 +324,8 @@ def ofdm_equalized_symbols(
     pilot_vals = np.asarray(profile.pilot_values, dtype=np.complex128)
     syms = []
     i = 0
+    # 4. Per data symbol: equalize, pilot CPE correction, collect equalized
+    #    data subcarriers (demapping happens in demodulate_ofdm).
     while True:
         b0 = d_body + 2 * slen + i * slen
         if b0 + n > len(x):
@@ -338,7 +355,7 @@ def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) ->
     Note:
         This function always returns its best-effort decode, even when the
         STF was never actually found within the bounded coarse-timing search
-        (see the loop below) -- it does not itself signal a sync failure.
+        (see :func:`ofdm_equalized_symbols`) -- it does not itself signal a sync failure.
         Callers that cannot guarantee ``rx`` starts at or near the STF (e.g.
         a detector-supplied region) should gate on
         :func:`ofdm_sync_confidence` first; see
