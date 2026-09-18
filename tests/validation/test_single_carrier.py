@@ -697,3 +697,29 @@ def test_dd_improves_mid_snr_ber() -> None:
         )
         dd_err += float(np.mean(rec[: len(b)] != b))
     assert dd_err / 8 < 0.15  # mid-SNR coherent QPSK stays well-behaved
+
+
+def test_pilot_insert_strip_roundtrip_and_geometry() -> None:
+    from core.single_carrier import (
+        PILOT_SYMBOL,
+        sc_insert_pilots,
+        sc_pilot_positions,
+        sc_strip_pilots,
+    )
+
+    payload = (np.arange(1, 49) + 0j).astype(np.complex128)  # 48 distinct symbols
+    p = 8
+    framed = sc_insert_pilots(payload, p)
+    # floor((N-1)/p) pilots, no trailing pilot.
+    assert len(framed) == len(payload) + (len(payload) - 1) // p
+    pos = sc_pilot_positions(len(framed), p)
+    assert np.all(framed[pos] == PILOT_SYMBOL)
+    assert np.array_equal(sc_strip_pilots(framed, p), payload)
+
+
+def test_pilot_spacing_zero_is_identity() -> None:
+    from core.single_carrier import sc_insert_pilots, sc_strip_pilots
+
+    payload = (np.arange(1, 20) + 0j).astype(np.complex128)
+    assert np.array_equal(sc_insert_pilots(payload, 0), payload)
+    assert np.array_equal(sc_strip_pilots(payload, 0), payload)

@@ -64,21 +64,29 @@ def _psk_payload(
     sps: int,
     bits_per_symbol: int,
     differential: bool,
+    pilot_spacing: int,
 ) -> npt.NDArray[np.complex128]:
     """BPSK/QPSK payload via the shared ``core.single_carrier`` symbol mapping.
 
     Uses :func:`core.single_carrier.sc_map_psk` for bit-to-symbol mapping --
     the single source of truth also used by the production PSK receiver
     (``sc_demodulate_psk``'s companion ``sc_demap_psk``) -- rather than an
-    ad-hoc local mapping, so transmit and receive agree exactly. Applies
-    rectangular pulse shaping via ``np.repeat``, matching the preamble's
-    pulse shaping (``core.single_carrier.preamble_wave_psk``).
+    ad-hoc local mapping, so transmit and receive agree exactly. When
+    ``pilot_spacing > 0`` and not differential, interleaves the shared fixed
+    BPSK pilot (:func:`core.single_carrier.sc_insert_pilots`) for pilot-aided
+    phase tracking. Applies rectangular pulse shaping via ``np.repeat``,
+    matching the preamble's pulse shaping
+    (``core.single_carrier.preamble_wave_psk``).
     """
-    from core.single_carrier import sc_diff_encode, sc_map_psk
+    from core.single_carrier import sc_diff_encode, sc_insert_pilots, sc_map_psk
 
     symbols = sc_map_psk(bits.astype(np.uint8), bits_per_symbol)
     if differential:
         symbols = sc_diff_encode(symbols)
+    elif pilot_spacing > 0:
+        # Pilots are for the coherent path only; differential stays
+        # phase-immune (no pilots) to avoid double-correction.
+        symbols = sc_insert_pilots(symbols, pilot_spacing)
     result: npt.NDArray[np.complex128] = np.repeat(symbols, sps)
     return result
 
@@ -108,6 +116,7 @@ def modulate(
     bt: float = 0.5,
     rolloff: float = 0.35,
     differential: bool = False,
+    pilot_spacing: int = 0,
 ) -> IQSamples:
     """Modulate ``data`` bytes to complex64 IQ, unit average power.
 
@@ -145,6 +154,12 @@ def modulate(
         differential: If True, differentially encode the BPSK/QPSK payload
             symbols (``core.single_carrier.sc_diff_encode``) before pulse
             shaping. Ignored for FSK/GFSK/OFDM.
+        pilot_spacing: Coherent BPSK/QPSK only -- if > 0, interleave a known
+            BPSK `+1` pilot after every ``pilot_spacing`` payload symbols
+            (``core.single_carrier.sc_insert_pilots``) for pilot-aided phase
+            tracking at the receiver. Ignored for differential PSK and for
+            FSK/GFSK/OFDM. Default 0 (pilotless) reproduces the PE framing
+            exactly.
 
     Returns:
         Unit-average-power IQ samples as ``complex64``. For FSK/GFSK/BPSK/
@@ -175,7 +190,9 @@ def modulate(
             payload = _fsk(bits, sps, mod_index, gaussian_bt)
         else:
             bits_per_symbol = 1 if scheme == ModScheme.BPSK else 2
-            payload = _psk_payload(bits, sps, bits_per_symbol, differential)
+            payload = _psk_payload(
+                bits, sps, bits_per_symbol, differential, pilot_spacing
+            )
         iq = np.concatenate([preamble, payload])
     else:
         raise ValueError(f"modulate() does not support {scheme}")

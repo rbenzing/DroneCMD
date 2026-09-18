@@ -410,6 +410,89 @@ def sc_diff_decode(
     return decoded
 
 
+# Pilot symbol for pilot-aided phase tracking: a fixed BPSK `+1`. Known at
+# both TX and RX, so the RX reads residual phase directly off it
+# (`angle(received_pilot)`). Simple and fixed; revisit only if low-SNR pilot
+# detection proves weak.
+PILOT_SYMBOL = complex(1.0, 0.0)
+
+
+def sc_pilot_positions(n_total: int, pilot_spacing: int) -> npt.NDArray[np.intp]:
+    """Pilot indices in a length-`n_total` interleaved symbol stream.
+
+    Pilots occupy a fixed comb: index ``i`` is a pilot iff
+    ``i % (pilot_spacing + 1) == pilot_spacing`` -- i.e. one pilot after every
+    ``pilot_spacing`` payload symbols. The comb is independent of the payload
+    length, so TX and RX agree without transmitting the count.
+
+    Args:
+        n_total: Length of the interleaved (payload + pilots) symbol stream.
+        pilot_spacing: Payload symbols between pilots. ``<= 0`` means no pilots.
+
+    Returns:
+        Sorted pilot indices as ``intp``; empty if ``pilot_spacing <= 0``.
+    """
+    if pilot_spacing <= 0 or n_total <= 0:
+        return np.array([], dtype=np.intp)
+    idx = np.arange(n_total)
+    positions: npt.NDArray[np.intp] = idx[
+        idx % (pilot_spacing + 1) == pilot_spacing
+    ].astype(np.intp)
+    return positions
+
+
+def sc_insert_pilots(symbols: Complex, pilot_spacing: int) -> Complex:
+    """Interleave `PILOT_SYMBOL` into a payload symbol stream.
+
+    Inserts one pilot after every ``pilot_spacing`` payload symbols, with no
+    trailing pilot (``floor((N-1)/pilot_spacing)`` pilots for ``N`` payload
+    symbols), matching the comb of :func:`sc_pilot_positions`.
+
+    Args:
+        symbols: Payload symbols (``complex128``).
+        pilot_spacing: Payload symbols between pilots. ``<= 0`` returns
+            ``symbols`` unchanged.
+
+    Returns:
+        Interleaved payload + pilot symbols (``complex128``).
+    """
+    data = np.asarray(symbols, dtype=np.complex128)
+    if pilot_spacing <= 0 or data.size == 0:
+        return data
+    out = []
+    payload_i = 0
+    out_i = 0
+    while payload_i < data.size:
+        if out_i % (pilot_spacing + 1) == pilot_spacing:
+            out.append(PILOT_SYMBOL)
+        else:
+            out.append(complex(data[payload_i]))
+            payload_i += 1
+        out_i += 1
+    return np.array(out, dtype=np.complex128)
+
+
+def sc_strip_pilots(symbols: Complex, pilot_spacing: int) -> Complex:
+    """Inverse of :func:`sc_insert_pilots`: drop pilots, keep payload order.
+
+    Args:
+        symbols: Interleaved payload + pilot symbols (``complex128``).
+        pilot_spacing: Payload symbols between pilots. ``<= 0`` returns
+            ``symbols`` unchanged.
+
+    Returns:
+        The payload symbols (``complex128``), pilots removed.
+    """
+    data = np.asarray(symbols, dtype=np.complex128)
+    if pilot_spacing <= 0 or data.size == 0:
+        return data
+    pilots = sc_pilot_positions(data.size, pilot_spacing)
+    mask = np.ones(data.size, dtype=bool)
+    mask[pilots] = False
+    payload: Complex = data[mask]
+    return payload
+
+
 def sc_estimate_cfo_psk(rx_preamble: Complex, sps: int) -> float:
     """Estimate normalized carrier frequency offset from the split preamble.
 

@@ -148,3 +148,36 @@ def test_ofdm_roundtrip_recovers_bits() -> None:
     assert iq.dtype == np.complex64
     rec = _ref_demod_ofdm(iq)
     assert np.array_equal(rec[: len(_bits(payload))], _bits(payload))
+
+
+def test_modulate_pilot_spacing_zero_matches_pilotless() -> None:
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    data = bytes(range(16))
+    for scheme in (ModScheme.BPSK, ModScheme.QPSK):
+        base = modulate(data, scheme, sps=8)
+        with_zero = modulate(data, scheme, sps=8, pilot_spacing=0)
+        assert np.array_equal(base, with_zero)
+
+
+def test_modulate_pilots_lengthen_psk_frame() -> None:
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    data = bytes(range(16))
+    base = modulate(data, ModScheme.QPSK, sps=8)
+    piloted = modulate(data, ModScheme.QPSK, sps=8, pilot_spacing=8)
+    assert len(piloted) > len(base)  # pilots add symbols
+
+
+def test_modulate_pilots_ignored_for_differential() -> None:
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    data = bytes(range(16))
+    diff_plain = modulate(data, ModScheme.QPSK, sps=8, differential=True)
+    diff_pilots = modulate(
+        data, ModScheme.QPSK, sps=8, differential=True, pilot_spacing=8
+    )
+    assert np.array_equal(diff_plain, diff_pilots)
