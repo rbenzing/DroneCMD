@@ -98,6 +98,12 @@ SC_CFO_RANGE = 0.02
 # (`sc_estimate_cfo_psk`) and the decision-directed loop's pull-in.
 SC_CFO_STEP = 1.0 / (4 * len(PREAMBLE_SYMBOLS) * SC_SPS)
 
+# Decision-directed phase-loop gain (see `sc_track_phase_dd`). A first-order
+# loop update `theta += alpha * phase_error`. Too large is noisy, too small is
+# sluggish; 0.1 tracks the slow residual-CFO drift that leaves coherent-PSK
+# BER non-monotonic at mid SNR while staying quiet on a clean burst.
+SC_DD_ALPHA = 0.1
+
 
 def preamble_wave_psk(profile: SCProfile) -> Complex:
     """Build the BPSK preamble waveform (rectangular pulse shaping).
@@ -434,6 +440,59 @@ def sc_estimate_cfo_psk(rx_preamble: Complex, sps: int) -> float:
     return cfo
 
 
+def sc_track_phase_dd(
+    symbols: Complex, *, bits_per_symbol: int, alpha: float = SC_DD_ALPHA
+) -> Complex:
+    """Decision-directed first-order phase tracking for coherent PSK.
+
+    After acquisition and absolute-phase alignment, a single preamble-point CFO
+    estimate still leaves a slow residual phase drift across the payload (the
+    estimate is itself noisy), which is what makes coherent-PSK BER
+    non-monotonic at mid SNR. This runs a first-order decision-directed loop:
+    for each symbol, derotate by the tracked phase, make the hard decision,
+    measure the phase error ``angle(sym * conj(decided))``, and step the
+    tracked phase by ``alpha * error``. On a clean burst the error is ~0 so the
+    loop stays put (exact round-trip preserved); on a drifting one it follows
+    the drift out.
+
+    Applies to coherent BPSK/QPSK only. FSK is non-coherent and differential is
+    phase-immune -- neither calls this.
+
+    Args:
+        symbols: Aligned payload symbol samples (``complex128``), one per
+            symbol (already at symbol centers).
+        bits_per_symbol: ``1`` for BPSK or ``2`` for QPSK (sets the decision
+            constellation).
+        alpha: Loop gain.
+
+    Returns:
+        Phase-corrected symbols (``complex128``), same length as ``symbols``;
+        hard demapping is left to :func:`sc_demap_psk`.
+
+    Raises:
+        ValueError: If ``bits_per_symbol`` is not 1 or 2.
+    """
+    if bits_per_symbol not in (1, 2):
+        raise ValueError(f"unsupported bits_per_symbol: {bits_per_symbol}")
+    data = np.asarray(symbols, dtype=np.complex128)
+    out: Complex = np.empty(data.size, dtype=np.complex128)
+    theta = 0.0
+    inv_sqrt2 = 1.0 / np.sqrt(2.0)
+    for k in range(data.size):
+        r = data[k] * np.exp(-1j * theta)
+        if bits_per_symbol == 1:
+            decided = complex(1.0 if r.real > 0 else -1.0, 0.0)
+        else:
+            decided = complex(
+                inv_sqrt2 if r.real > 0 else -inv_sqrt2,
+                inv_sqrt2 if r.imag > 0 else -inv_sqrt2,
+            )
+        err = float(np.angle(r * np.conj(decided)))
+        out[k] = r
+        theta += alpha * err
+    return out
+
+
 def sc_demodulate_psk(
     rx: Complex,
     profile: SCProfile,
@@ -519,7 +578,10 @@ def sc_demodulate_psk(
 
     aligned = payload * np.exp(-1j * np.angle(peak2))
     centers = aligned[profile.sps // 2 :: profile.sps]
-    bits = sc_demap_psk(centers, bits_per_symbol)
+    tracked = sc_track_phase_dd(
+        centers, bits_per_symbol=bits_per_symbol, alpha=SC_DD_ALPHA
+    )
+    bits = sc_demap_psk(tracked, bits_per_symbol)
     return bits
 
 

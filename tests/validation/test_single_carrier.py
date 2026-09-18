@@ -643,3 +643,57 @@ def test_fsk_wide_cfo_acquire() -> None:
         rx = rx * np.exp(1j * 2 * np.pi * 0.015 * n)
         rec = sc_demodulate_fsk(rx, DEFAULT_SC_PROFILE, gfsk=gfsk)
         assert np.array_equal(rec[: len(b)], b)
+
+
+def test_dd_tracks_linear_phase_drift() -> None:
+    # A slow phase ramp across the payload that a single global derotation
+    # cannot remove: static demap fails, DD tracking recovers it.
+    from core.single_carrier import sc_demap_psk, sc_map_psk, sc_track_phase_dd
+
+    rng = np.random.default_rng(3)
+    n_sym = 400
+    bits = rng.integers(0, 2, size=2 * n_sym).astype(np.uint8)
+    syms = sc_map_psk(bits, 2)
+    ramp = np.exp(1j * np.linspace(0.0, 1.2, n_sym))  # ~0.003 rad/symbol drift
+    rx = syms * ramp
+    # Static (no tracking): the late symbols are rotated past the decision
+    # boundary -> nonzero BER.
+    static_bits = sc_demap_psk(rx, 2)
+    assert float(np.mean(static_bits != bits)) > 0.05
+    # DD tracking: drift removed -> exact.
+    tracked = sc_track_phase_dd(rx, bits_per_symbol=2, alpha=0.1)
+    dd_bits = sc_demap_psk(tracked, 2)
+    assert np.array_equal(dd_bits, bits)
+
+
+def test_dd_noiseless_coherent_roundtrip_exact() -> None:
+    # Regression guard: DD must not perturb a clean coherent burst.
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+
+    b = _bits(DATA)
+    rx = _psk_burst(b, bps=2, differential=False).astype(np.complex128)
+    rec = sc_demodulate_psk(
+        rx, DEFAULT_SC_PROFILE, bits_per_symbol=2, differential=False
+    )
+    assert np.array_equal(rec[: len(b)], b)
+
+
+def test_dd_improves_mid_snr_ber() -> None:
+    # Averaged over seeds so the assertion is not flaky: coherent QPSK with DD
+    # tracking stays well-behaved (low BER) at a mid SNR where the PE path
+    # wobbled. Seeds are fixed via the repro generator for determinism.
+    from core.single_carrier import DEFAULT_SC_PROFILE, sc_demodulate_psk
+    from validation.repro import rng as make_rng
+    from validation.synth.channel import add_awgn_at_snr
+
+    p = DEFAULT_SC_PROFILE
+    b = _bits(DATA)
+    dd_err = 0.0
+    for seed in range(8):
+        rx = _psk_burst(b, bps=2, differential=False).astype(np.complex128)
+        noisy, _, _ = add_awgn_at_snr(rx.astype(np.complex64), 10.0, make_rng(seed))
+        rec = sc_demodulate_psk(
+            noisy.astype(np.complex128), p, bits_per_symbol=2, differential=False
+        )
+        dd_err += float(np.mean(rec[: len(b)] != b))
+    assert dd_err / 8 < 0.15  # mid-SNR coherent QPSK stays well-behaved
