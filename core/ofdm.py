@@ -269,6 +269,62 @@ def ofdm_sync_confidence(
     return float(np.max(metric[:search_span]))
 
 
+def ofdm_equalized_symbols(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Complex:
+    """Equalized data subcarriers for every data symbol, concatenated.
+
+    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
+    LTF least-squares channel estimation, and per-symbol one-tap equalization
+    with pilot common-phase-error correction as :func:`demodulate_ofdm`, but
+    returns the equalized data-subcarrier symbols (the pre-demap signal, in
+    subcarrier order, all data symbols concatenated) rather than demapped bits.
+    Empty when ``rx`` is shorter than the STF+LTF preamble or yields no data
+    symbol. Used by the blind OFDM resolver (:mod:`core.blind`) to score
+    trial-demodulation quality; :func:`demodulate_ofdm` demaps its output.
+    """
+    n = profile.fft_size
+    slen = profile.symbol_len
+    half = n // 2
+    x = np.asarray(rx, dtype=np.complex128)
+    if len(x) < 2 * slen:
+        return np.zeros(0, dtype=np.complex128)
+    metric, p = _sc_metric(x, half)
+    if metric.size == 0:
+        return np.zeros(0, dtype=np.complex128)
+    search_span = min(len(metric), slen)
+    d_body = int(np.argmax(metric[:search_span]))
+    df = float(np.angle(p[d_body])) / (2.0 * np.pi * half)
+    x = x * np.exp(-1j * 2.0 * np.pi * df * np.arange(len(x)))
+    occ_bins = _bins(profile, profile.occupied_carriers)
+    _, ltf_known = _ltf_freq(profile)
+    ltf_start = d_body + slen
+    if ltf_start + n > len(x):
+        return np.zeros(0, dtype=np.complex128)
+    y_ltf = np.fft.fft(x[ltf_start : ltf_start + n], n)
+    h = np.ones(n, dtype=np.complex128)
+    h[occ_bins] = y_ltf[occ_bins] / ltf_known
+    data_bins = _bins(profile, profile.data_carriers)
+    pilot_bins = _bins(profile, profile.pilot_carriers)
+    pilot_vals = np.asarray(profile.pilot_values, dtype=np.complex128)
+    syms = []
+    i = 0
+    while True:
+        b0 = d_body + 2 * slen + i * slen
+        if b0 + n > len(x):
+            break
+        y = np.fft.fft(x[b0 : b0 + n], n)
+        pilots_eq = y[pilot_bins] / h[pilot_bins]
+        cpe = float(np.angle(np.sum(pilots_eq * np.conj(pilot_vals))))
+        data_eq = (y[data_bins] / h[data_bins]) * np.exp(-1j * cpe)
+        syms.append(data_eq)
+        i += 1
+    if not syms:
+        return np.zeros(0, dtype=np.complex128)
+    out: Complex = np.concatenate(syms).astype(np.complex128)
+    return out
+
+
 def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) -> Bits:
     """Recover data bits from an OFDM burst with a full S&C receiver.
 
@@ -288,62 +344,7 @@ def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) ->
         :func:`ofdm_sync_confidence` first; see
         :class:`core.demodulation.OFDMDemodulator`.
     """
-    n = profile.fft_size
-    slen = profile.symbol_len
-    half = n // 2
-    x = np.asarray(rx, dtype=np.complex128)
-    if len(x) < 2 * slen:
+    syms = ofdm_equalized_symbols(rx, profile)
+    if syms.size == 0:
         return np.zeros(0, dtype=np.uint8)
-
-    # 1. Coarse timing = argmax of the S&C metric (max of the S&C metric).
-    # The true STF boundary sits within the metric's flat-topped plateau
-    # (the metric stays near-peak for a range of `d` around the exact
-    # boundary), so `d_body` lands somewhere on that plateau rather than
-    # necessarily the exact sample; the residual offset is within the
-    # cyclic prefix and is absorbed by the LTF-based channel estimate below
-    # rather than causing inter-symbol interference.
-    # The acquisition search is bounded to one symbol length from the start
-    # of the buffer: any real receiver only searches a burst's *known*
-    # approximate start for a bounded timing/propagation uncertainty rather
-    # than the whole capture, and doing so here also keeps a low-SNR noise
-    # excursion elsewhere in the payload from hijacking the global argmax
-    # away from the true (but noisy) preamble peak.
-    metric, p = _sc_metric(x, half)
-    if metric.size == 0:
-        return np.zeros(0, dtype=np.uint8)
-    search_span = min(len(metric), slen)
-    d_body = int(np.argmax(metric[:search_span]))
-
-    # 2. Fractional CFO from the STF half-symbol phase; derotate the burst.
-    df = float(np.angle(p[d_body])) / (2.0 * np.pi * half)
-    x = x * np.exp(-1j * 2.0 * np.pi * df * np.arange(len(x)))
-
-    # 3. LS channel estimate from the LTF body (one symbol after the STF body).
-    occ_bins = _bins(profile, profile.occupied_carriers)
-    _, ltf_known = _ltf_freq(profile)
-    ltf_start = d_body + slen
-    if ltf_start + n > len(x):
-        return np.zeros(0, dtype=np.uint8)
-    y_ltf = np.fft.fft(x[ltf_start : ltf_start + n], n)
-    h = np.ones(n, dtype=np.complex128)
-    h[occ_bins] = y_ltf[occ_bins] / ltf_known
-
-    # 4. Per data symbol: equalize, pilot CPE correction, QPSK demap.
-    data_bins = _bins(profile, profile.data_carriers)
-    pilot_bins = _bins(profile, profile.pilot_carriers)
-    pilot_vals = np.asarray(profile.pilot_values, dtype=np.complex128)
-    bits_out = []
-    i = 0
-    while True:
-        b0 = d_body + 2 * slen + i * slen
-        if b0 + n > len(x):
-            break
-        y = np.fft.fft(x[b0 : b0 + n], n)
-        pilots_eq = y[pilot_bins] / h[pilot_bins]
-        cpe = float(np.angle(np.sum(pilots_eq * np.conj(pilot_vals))))
-        data_eq = (y[data_bins] / h[data_bins]) * np.exp(-1j * cpe)
-        bits_out.append(qpsk_demap(data_eq))
-        i += 1
-    if not bits_out:
-        return np.zeros(0, dtype=np.uint8)
-    return np.concatenate(bits_out).astype(np.uint8)
+    return qpsk_demap(syms).astype(np.uint8)

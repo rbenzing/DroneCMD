@@ -201,3 +201,37 @@ def test_create_synth_dataset_ofdm_protocol() -> None:
     for cap in ds:
         assert cap.provenance["scheme"] == "ofdm"
         assert cap.truth_regions is not None and len(cap.truth_regions) == 1
+
+
+def test_ofdm_equalized_symbols_matches_demod() -> None:
+    """qpsk_demap(ofdm_equalized_symbols(rx)) is byte-identical to demodulate_ofdm(rx)."""
+    from core.ofdm import (
+        DEFAULT_OFDM_PROFILE,
+        demodulate_ofdm,
+        modulate_ofdm,
+        ofdm_equalized_symbols,
+        qpsk_demap,
+    )
+
+    b = np.array([1, 0, 1, 1, 0, 0, 1, 0] * 40, dtype=np.uint8)
+    rx = modulate_ofdm(b, DEFAULT_OFDM_PROFILE)
+    syms = ofdm_equalized_symbols(rx, DEFAULT_OFDM_PROFILE)
+    assert syms.dtype == np.complex128
+    assert np.array_equal(qpsk_demap(syms), demodulate_ofdm(rx, DEFAULT_OFDM_PROFILE))
+
+
+def test_ofdm_equalized_symbols_roundtrip_and_empty() -> None:
+    from core.ofdm import (
+        DEFAULT_OFDM_PROFILE,
+        demodulate_ofdm,
+        modulate_ofdm,
+        ofdm_equalized_symbols,
+    )
+
+    b = np.array([0, 1, 1, 0] * 30, dtype=np.uint8)
+    rx = modulate_ofdm(b, DEFAULT_OFDM_PROFILE)
+    out = demodulate_ofdm(rx, DEFAULT_OFDM_PROFILE)
+    assert np.array_equal(out[: len(b)], b)  # noiseless round-trip preserved
+    # Too short for STF+LTF -> empty (guards all early-return paths).
+    empty = ofdm_equalized_symbols(np.zeros(4, dtype=np.complex128), DEFAULT_OFDM_PROFILE)
+    assert empty.size == 0 and empty.dtype == np.complex128
