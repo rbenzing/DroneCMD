@@ -50,3 +50,17 @@ def test_repetition_corrects_minority_errors() -> None:
     coded = codec.encode(bits).copy()
     coded[0] ^= 1  # flip one of the 3 copies of bit0 -> majority still correct
     assert np.array_equal(codec.decode(coded).bits, bits)
+
+
+def test_crc_frame_roundtrip_and_detects_error() -> None:
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    payload = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1], dtype=np.uint8)
+    frame = frame_with_crc(payload)
+    assert frame.size == payload.size + 16
+    got, ok = check_and_strip_crc(frame)
+    assert ok and np.array_equal(got, payload)
+    bad = frame.copy()
+    bad[3] ^= 1
+    _, ok2 = check_and_strip_crc(bad)
+    assert ok2 is False  # loud: corruption detected

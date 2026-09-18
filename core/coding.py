@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Mapping, Protocol, Union, cast
+from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -167,3 +167,36 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
 
 def coding_names() -> List[str]:
     return list(CODING_CATALOG)
+
+
+_CRC16_POLY = 0x1021
+
+
+def crc16_ccitt(data_bits: Bits) -> Bits:
+    """CRC-16-CCITT (poly 0x1021, init 0xFFFF) over an MSB-first bit array."""
+    reg = 0xFFFF
+    for bit in np.asarray(data_bits, dtype=np.uint8):
+        reg ^= int(bit) << 15
+        reg = (
+            ((reg << 1) ^ _CRC16_POLY) & 0xFFFF
+            if (reg & 0x8000)
+            else (reg << 1) & 0xFFFF
+        )
+    return np.array([(reg >> (15 - i)) & 1 for i in range(16)], dtype=np.uint8)
+
+
+def frame_with_crc(payload_bits: Bits) -> Bits:
+    """Append CRC-16-CCITT to payload bits."""
+    p = np.asarray(payload_bits, dtype=np.uint8)
+    result = np.concatenate([p, crc16_ccitt(p)]).astype(np.uint8)
+    return cast(Bits, result)
+
+
+def check_and_strip_crc(frame_bits: Bits) -> Tuple[Bits, bool]:
+    """Verify CRC-16-CCITT and extract payload; return (payload, crc_ok)."""
+    f = np.asarray(frame_bits, dtype=np.uint8)
+    if f.size < 16:
+        return np.zeros(0, dtype=np.uint8), False
+    payload, crc = f[:-16], f[-16:]
+    ok = bool(np.array_equal(crc, crc16_ccitt(payload)))
+    return payload.astype(np.uint8), ok
