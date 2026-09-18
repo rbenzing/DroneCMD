@@ -578,3 +578,41 @@ def test_single_carrier_sync_gate_across_snr() -> None:
     # empty (not merely wrong) recovered-bit array.
     assert conf_lo < SC_SYNC_THRESHOLD
     assert len(rec_lo) == 0
+
+
+def test_acquire_recovers_start_and_wide_cfo() -> None:
+    from core.single_carrier import DEFAULT_SC_PROFILE, preamble_wave_psk, sc_acquire
+
+    p = DEFAULT_SC_PROFILE
+    ref = preamble_wave_psk(p)
+    offset = 37
+    burst = np.concatenate(
+        [np.zeros(offset, dtype=np.complex128), ref, np.zeros(80, dtype=np.complex128)]
+    )
+    # A CFO ~5x beyond PE's ~0.0029 acquisition ceiling, inside SC_CFO_RANGE.
+    cfo_true = 0.015
+    n = np.arange(len(burst))
+    rx = burst * np.exp(1j * 2 * np.pi * cfo_true * n)
+    start, cfo, peak = sc_acquire(rx, ref, p.sps)
+    assert abs(start - offset) <= 1
+    assert abs(cfo - cfo_true) < 2e-3  # within one grid step
+    assert abs(peak) > 0.9
+
+
+def test_acquire_gates_out_noise() -> None:
+    from core.single_carrier import (
+        DEFAULT_SC_PROFILE,
+        SC_SYNC_THRESHOLD,
+        preamble_wave_psk,
+        sc_acquire,
+    )
+
+    p = DEFAULT_SC_PROFILE
+    ref = preamble_wave_psk(p)
+    rng = np.random.default_rng(0)
+    noise = (rng.standard_normal(500) + 1j * rng.standard_normal(500)).astype(
+        np.complex128
+    )
+    _, _, peak = sc_acquire(noise, ref, p.sps)
+    # Wider search (many CFO hypotheses) must not manufacture a false lock.
+    assert abs(peak) < SC_SYNC_THRESHOLD

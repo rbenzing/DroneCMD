@@ -85,6 +85,19 @@ BARKER13: Real = np.array(
 # command payloads.
 PREAMBLE_SYMBOLS: Real = np.concatenate([BARKER13, BARKER13])
 
+# CFO-hypothesis-search acquisition (see `sc_acquire`). The single
+# full-preamble matched filter (`sc_frame_sync`) only holds lock while the
+# preamble stays coherent, which caps the acquirable CFO at ~0.003
+# cycles/sample at sps=8 -- well short of the OFDM chain's ~0.0156. Searching
+# a grid of CFO hypotheses and derotating before each matched-filter pass
+# lifts the acquisition range to `SC_CFO_RANGE`, past OFDM parity.
+SC_CFO_RANGE = 0.02
+# Grid resolution. Chosen as 1/(4 * preamble-length-in-samples) so the
+# residual after coarse correction (< SC_CFO_STEP / 2) is comfortably inside
+# both the two-halves fine estimator's +/-1/(2*13*sps) range
+# (`sc_estimate_cfo_psk`) and the decision-directed loop's pull-in.
+SC_CFO_STEP = 1.0 / (4 * len(PREAMBLE_SYMBOLS) * SC_SPS)
+
 
 def preamble_wave_psk(profile: SCProfile) -> Complex:
     """Build the BPSK preamble waveform (rectangular pulse shaping).
@@ -208,6 +221,65 @@ def sc_lock_confidence(rx: Complex, ref_wave: Complex, search_span: int) -> floa
         return 0.0
     _, peak = sc_frame_sync(rx, ref_wave, search_span)
     return abs(peak)
+
+
+def sc_acquire(
+    rx: Complex,
+    ref_wave: Complex,
+    sps: int,
+    *,
+    cfo_range: float = SC_CFO_RANGE,
+    cfo_step: float = SC_CFO_STEP,
+) -> Tuple[int, float, complex]:
+    """Joint coarse timing + coarse CFO acquisition via a CFO-hypothesis grid.
+
+    The single full-preamble matched filter (:func:`sc_frame_sync`) loses
+    coherence -- and therefore lock -- once a carrier frequency offset rotates
+    the reference appreciably across its own length, capping the acquirable
+    CFO well below the OFDM chain's. This searches a grid of CFO hypotheses in
+    ``[-cfo_range, +cfo_range]`` spaced by ``cfo_step``; for each hypothesis it
+    derotates ``rx`` and runs the normalized matched filter, then returns the
+    ``(start, cfo, peak)`` of the hypothesis maximizing ``abs(peak)``. This
+    recovers coarse timing, coarse CFO, and the absolute phase together, with
+    acquisition range ``cfo_range``.
+
+    Compute is ``n_cfo * O(n * L)`` matched-filter work (``n_cfo =
+    2*cfo_range/cfo_step + 1``), bounded and offline (T&E) -- acceptable; if it
+    becomes a hotspot for large captures, vectorize (FFT-domain) later.
+
+    Args:
+        rx: Received IQ samples to search, as ``complex128``.
+        ref_wave: Known reference (preamble) waveform, as ``complex128``.
+        sps: Samples per symbol (search span scales with it, matching the
+            single-path receivers).
+        cfo_range: Half-width of the CFO grid in cycles/sample.
+        cfo_step: Grid spacing in cycles/sample.
+
+    Returns:
+        ``(preamble_start_index, coarse_cfo, complex_peak)``. ``abs(peak)`` in
+        ``[0, 1]`` is the lock confidence (compare to ``SC_SYNC_THRESHOLD``);
+        ``coarse_cfo`` is the best grid CFO in cycles/sample. Returns
+        ``(0, 0.0, 0+0j)`` if no full-length window fits.
+    """
+    signal = np.asarray(rx, dtype=np.complex128)
+    ref = np.asarray(ref_wave, dtype=np.complex128)
+    if signal.size < ref.size:
+        return 0, 0.0, complex(0.0, 0.0)
+    n = np.arange(signal.size)
+    search_span = sps * 40
+    n_steps = int(np.floor(cfo_range / cfo_step))
+    hypotheses = np.arange(-n_steps, n_steps + 1) * cfo_step
+    best_start = 0
+    best_cfo = 0.0
+    best_peak = complex(0.0, 0.0)
+    for cfo in hypotheses:
+        derotated = signal * np.exp(-1j * 2 * np.pi * cfo * n)
+        start, peak = sc_frame_sync(derotated, ref, search_span)
+        if abs(peak) > abs(best_peak):
+            best_start = start
+            best_cfo = float(cfo)
+            best_peak = peak
+    return best_start, best_cfo, best_peak
 
 
 def sc_map_psk(bits: Bits, bits_per_symbol: int) -> Complex:
