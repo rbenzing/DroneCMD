@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from core.ofdm import DEFAULT_OFDM_PROFILE, OFDMProfile
 from core.single_carrier import SCProfile
@@ -43,11 +43,15 @@ class SCProfileSpec:
         name: Stable catalog key (e.g. ``"ble_2m"``).
         mod: The single-carrier modulation.
         profile: The PHY parameters (sps/mod_index/bt).
+        coding: Optional :data:`core.coding.CODING_CATALOG` key naming the
+            channel code carried by this profile. ``None`` (the default)
+            means uncoded -- every pre-existing catalog entry is unchanged.
     """
 
     name: str
     mod: SCMod
     profile: SCProfile
+    coding: Optional[str] = None
 
     @property
     def bits_per_symbol(self) -> int:
@@ -85,6 +89,11 @@ SC_CATALOG: Dict[str, SCProfileSpec] = {
     ),
     "psk_c2": SCProfileSpec("psk_c2", SCMod.BPSK, SCProfile(sps=8)),
     "qpsk_link": SCProfileSpec("qpsk_link", SCMod.QPSK, SCProfile(sps=8)),
+    # PHY-distinct coded profile (P3a): sps=16 is unique among SC_CATALOG
+    # entries so the blind resolver separates it by acquisition alone, same
+    # as the other distinct-sps profiles above -- this avoids the same-PHY
+    # collision that would otherwise defeat blind resolution.
+    "rep_bpsk": SCProfileSpec("rep_bpsk", SCMod.BPSK, SCProfile(sps=16), coding="rep3"),
 }
 
 
@@ -143,3 +152,14 @@ def family_of(name: str) -> Family:
 def all_profile_names() -> List[str]:
     """All known profile names (single-carrier then OFDM)."""
     return list(SC_CATALOG) + list(OFDM_CATALOG)
+
+
+def coding_of(name: str) -> Optional[str]:
+    """Return the :mod:`core.coding` catalog key carried by profile ``name``.
+
+    ``None`` for an uncoded single-carrier profile, an unknown name, or any
+    OFDM profile (OFDM profiles carry no coding in P3a).
+    """
+    if name in SC_CATALOG:
+        return SC_CATALOG[name].coding
+    return None

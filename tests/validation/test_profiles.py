@@ -19,6 +19,7 @@ def test_catalog_has_expected_entries() -> None:
         "fsk_basic",
         "psk_c2",
         "qpsk_link",
+        "rep_bpsk",
     }
     assert "wifi_20" in OFDM_CATALOG
 
@@ -98,3 +99,25 @@ def test_ofdm_catalog_profiles_roundtrip() -> None:
         rx = modulate_ofdm(b, profile)
         out = demodulate_ofdm(rx, profile)
         assert np.array_equal(out[: len(b)], b), f"round-trip failed for {name}"
+
+
+def test_coding_of_and_coded_profile() -> None:
+    from core.coding import CODING_CATALOG
+    from core.profiles import SC_CATALOG, coding_of
+
+    assert coding_of("sik_gfsk") is None  # existing profiles uncoded
+    assert coding_of("rep_bpsk") == "rep3"
+    assert SC_CATALOG["rep_bpsk"].coding in CODING_CATALOG
+    assert SC_CATALOG["rep_bpsk"].profile.sps == 16  # PHY-distinct
+
+
+def test_rep_bpsk_blind_resolves() -> None:
+    import numpy as np
+
+    from core.blind import resolve_sc_profile
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=16).astype(np.complex128)
+    spec, _ = resolve_sc_profile(iq)
+    assert spec is not None and spec.name == "rep_bpsk"

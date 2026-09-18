@@ -20,6 +20,7 @@ _SCMOD_TO_SCHEME = {
     "fsk_basic": ModScheme.FSK,
     "psk_c2": ModScheme.BPSK,
     "qpsk_link": ModScheme.QPSK,
+    "rep_bpsk": ModScheme.BPSK,
 }
 
 
@@ -142,6 +143,7 @@ def test_profile_id_accuracy_degrades_gracefully() -> None:
         "fsk_basic": ModScheme.FSK,
         "psk_c2": ModScheme.BPSK,
         "qpsk_link": ModScheme.QPSK,
+        "rep_bpsk": ModScheme.BPSK,
     }
     acc = {}
     for snr in (25.0, 15.0):
