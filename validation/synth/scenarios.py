@@ -41,6 +41,10 @@ class DatasetSpec:
         guard: Number of noise-only samples placed before and after the
             packet.
         sps: Samples per symbol passed through to :func:`modulate`.
+        differential: If True, differentially encode BPSK/QPSK payloads
+            (passed through to :func:`modulate` and recorded in each
+            capture's ``provenance["differential"]``). Ignored by FSK/GFSK/
+            OFDM schemes.
     """
 
     protocols: List[str]
@@ -52,6 +56,7 @@ class DatasetSpec:
     payload_len: int = 32
     guard: int = 512
     sps: int = 8
+    differential: bool = False
 
 
 def _noise(n: int, std: float, generator: np.random.Generator) -> IQSamples:
@@ -89,7 +94,9 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                 payload = g.integers(
                     0, 256, size=spec.payload_len, dtype=np.uint8
                 ).tobytes()
-                clean = modulate(payload, scheme, sps=spec.sps)
+                clean = modulate(
+                    payload, scheme, sps=spec.sps, differential=spec.differential
+                )
                 noisy_pkt, noise_std, achieved = add_awgn_at_snr(clean, snr, g)
                 pre = _noise(spec.guard, noise_std, g)
                 post = _noise(spec.guard, noise_std, g)
@@ -109,6 +116,7 @@ def build_scenario(spec: DatasetSpec) -> List[LabeledCapture]:
                             "requested_snr_db": float(snr),
                             "payload_hex": payload.hex(),
                             "seed": spec.seed,
+                            "differential": spec.differential,
                         },
                     )
                 )

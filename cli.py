@@ -421,6 +421,10 @@ For more information, see the documentation.
     v_synth.add_argument('--n', type=int, default=20, help='Captures per (protocol, SNR) cell')
     v_synth.add_argument('--seed', type=int, default=42)
     v_synth.add_argument('--out', required=True, help='Output dataset directory')
+    v_synth.add_argument(
+        '--differential', action='store_true',
+        help='Use differential encoding (DBPSK/DQPSK) for PSK schemes',
+    )
 
     v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
     v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
@@ -978,11 +982,13 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
                 "mavlink": ModScheme.FSK,
                 "dji": ModScheme.QPSK,
                 "ocusync": ModScheme.OFDM,
+                "bpsk_link": ModScheme.BPSK,
             }
             scheme_by_protocol = {p: default_scheme.get(p, ModScheme.FSK) for p in protocols}
             ds = create_synth_dataset(
                 protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
                 scheme_by_protocol=scheme_by_protocol, seed=args.seed,
+                differential=args.differential,
             )
             ds.write(Path(args.out))
             output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")

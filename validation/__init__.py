@@ -47,6 +47,7 @@ def create_synth_dataset(
     sample_rate: float = 2_048_000.0,
     seed: int = 42,
     payload_len: int = 32,
+    differential: bool = False,
 ) -> LabeledDataset:
     """Create a synthetic labeled dataset for validation.
 
@@ -58,6 +59,8 @@ def create_synth_dataset(
         sample_rate: Sample rate in Hz (default 2.048 MHz).
         seed: Random seed for reproducibility (default 42).
         payload_len: Payload length in bytes (default 32).
+        differential: If True, differentially encode BPSK/QPSK payloads
+            (default False). Ignored by FSK/GFSK/OFDM schemes.
 
     Returns:
         A LabeledDataset instance.
@@ -70,6 +73,7 @@ def create_synth_dataset(
         seed=seed,
         scheme_by_protocol=scheme_by_protocol,
         payload_len=payload_len,
+        differential=differential,
     )
     return LabeledDataset(build_scenario(spec))
 
