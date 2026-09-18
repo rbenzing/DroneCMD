@@ -1402,11 +1402,17 @@ def main() -> None:
     fsk_engine = DemodulationEngine(fsk_config)
     fsk_result = fsk_engine.demodulate(fsk_signal)
 
+    # SNR is only estimated once single-carrier preamble sync succeeds (see
+    # FSKDemodulator.demodulate); this ad hoc demo signal carries no
+    # preamble, so it stays None on the (expected) sync failure below --
+    # guard the format string rather than assume a numeric value.
+    fsk_snr = f"{fsk_result.snr_db:.1f} dB" if fsk_result.snr_db is not None else "n/a"
+
     print(f"FSK Results:")
     print(f"  Valid: {fsk_result.is_valid}")
     print(f"  Bits decoded: {len(fsk_result.bits)}")
     print(f"  Decoded pattern: {''.join(map(str, fsk_result.bits[:len(test_bits)]))}")
-    print(f"  SNR: {fsk_result.snr_db:.1f} dB")
+    print(f"  SNR: {fsk_snr}")
     print(f"  Processing time: {fsk_result.processing_time_ms:.1f} ms")
     print(f"  Warnings: {fsk_result.warnings}")
 
@@ -1436,12 +1442,23 @@ def main() -> None:
     psk_engine = DemodulationEngine(psk_config)
     psk_result = psk_engine.demodulate(psk_signal)
 
+    # SNR/EVM are only estimated once single-carrier preamble sync succeeds
+    # (see PSKDemodulator.demodulate); this ad hoc demo signal carries no
+    # preamble, so both stay None on the (expected) sync failure below --
+    # guard the format strings rather than assume numeric values.
+    psk_snr = f"{psk_result.snr_db:.1f} dB" if psk_result.snr_db is not None else "n/a"
+    psk_evm = (
+        f"{psk_result.evm_percent:.1f}%"
+        if psk_result.evm_percent is not None
+        else "n/a"
+    )
+
     print(f"PSK Results:")
     print(f"  Valid: {psk_result.is_valid}")
     print(f"  Bits decoded: {len(psk_result.bits)}")
     print(f"  Decoded pattern: {''.join(map(str, psk_result.bits[:len(test_bits)]))}")
-    print(f"  SNR: {psk_result.snr_db:.1f} dB")
-    print(f"  EVM: {psk_result.evm_percent:.1f}%")
+    print(f"  SNR: {psk_snr}")
+    print(f"  EVM: {psk_evm}")
     print(f"  Processing time: {psk_result.processing_time_ms:.1f} ms")
     print(f"  Phase offset: {psk_result.phase_offset_deg:.1f}°")
 
