@@ -131,7 +131,7 @@ def _papr(iq: Complex) -> float:
 def classify_family(
     iq: Complex,
     *,
-    fft_sizes: Tuple[int, ...] = (64,),
+    fft_sizes: Tuple[int, ...] = (32, 64, 128),
     cp_ratio: float = 0.25,
     ofdm_threshold: float = OFDM_FAMILY_THRESHOLD,
     papr_threshold: float = PAPR_OFDM_THRESHOLD,
@@ -139,8 +139,8 @@ def classify_family(
     """Classify a region as OFDM vs single-carrier (blind).
 
     A region is judged OFDM only if it has BOTH a cyclic-prefix
-    autocorrelation peak (``>= ofdm_threshold`` at some candidate FFT size --
-    just ``64`` = ``wifi_20`` for now) AND high PAPR (``>= papr_threshold``).
+    autocorrelation peak (``>= ofdm_threshold`` at some candidate FFT size
+    (the OFDM catalog's FFT sizes 32/64/128)) AND high PAPR (``>= papr_threshold``).
     The CP peak alone is fooled by the short deterministic single-carrier
     preamble's lag-N self-match; the PAPR co-requirement rejects it (SC is
     near-constant-envelope), and the CP requirement rejects noise. Anything not

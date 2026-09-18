@@ -46,3 +46,28 @@ def test_noise_is_single_carrier_default() -> None:
     )
     fam, _ = classify_family(noise)
     assert fam == Family.SINGLE_CARRIER  # conservative default; SC resolver then gates
+
+
+def test_classify_family_tags_all_ofdm_fft_sizes() -> None:
+    import numpy as np
+
+    from core.blind import classify_family
+    from core.ofdm import modulate_ofdm
+    from core.profiles import OFDM_CATALOG, Family
+
+    b = np.array([1, 0, 1, 1, 0, 0, 1, 0] * 12, dtype=np.uint8)
+    for name in ("wifi_20", "wifi_40", "ofdm_nb"):
+        rx = modulate_ofdm(b, OFDM_CATALOG[name]).astype(np.complex128)
+        family, _ = classify_family(rx)  # default fft_sizes must cover 32/64/128
+        assert family == Family.OFDM, f"{name} not tagged OFDM"
+
+
+def test_classify_family_still_tags_single_carrier() -> None:
+    from core.blind import classify_family
+    from core.profiles import Family
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    gfsk = modulate(bytes(range(32)), ModScheme.GFSK, sps=8, mod_index=0.7, bt=0.5)
+    family, _ = classify_family(gfsk.astype("complex128"))
+    assert family == Family.SINGLE_CARRIER
