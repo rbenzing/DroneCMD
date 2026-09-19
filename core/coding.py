@@ -10,9 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
+from typing import Optional  # noqa: F401; used in Task 4 (RS decode)
 
 import numpy as np
 import numpy.typing as npt
+
+from core.galois import (  # noqa: F401; used in Task 4 (RS decode)
+    GF256,
+    GF2m,
+    berlekamp_massey,
+    chien_search,
+)
 
 Bits = npt.NDArray[np.uint8]
 LLRs = npt.NDArray[np.float64]
@@ -253,6 +261,52 @@ class _Convolutional:
         return DecodeResult(bits=bits)
 
 
+def _bits_to_symbols(bits: Bits) -> List[int]:
+    b = np.asarray(bits, dtype=np.uint8)
+    if b.size % 8 != 0:
+        raise ValueError("RS requires a byte-aligned bit stream")
+    packed = np.packbits(b)
+    return [int(v) for v in packed]
+
+
+def _symbols_to_bits(syms: List[int]) -> Bits:
+    arr = np.array(syms, dtype=np.uint8)
+    return cast(Bits, np.unpackbits(arr).astype(np.uint8))
+
+
+def _rs_generator_poly(field: GF2m, nsym: int, fcr: int) -> List[int]:
+    g = [1]
+    for i in range(nsym):
+        g = field.poly_mul(g, [1, field.pow(2, i + fcr)])
+    return g
+
+
+def _rs_encode_symbols(field: GF2m, msg: List[int], nsym: int, fcr: int) -> List[int]:
+    gen = _rs_generator_poly(field, nsym, fcr)
+    _, remainder = field.poly_div(msg + [0] * (len(gen) - 1), gen)
+    return msg + remainder
+
+
+class _ReedSolomon:
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.m = int(spec.params["gf_m"])  # type: ignore[call-overload]
+        self.t = int(spec.params["t"])  # type: ignore[call-overload]
+        self.fcr = int(spec.params.get("fcr", 1))  # type: ignore[arg-type]
+        prim = int(spec.params.get("prim_poly", 0x11D))  # type: ignore[arg-type]
+        self.nsym = 2 * self.t
+        self.field = GF256 if (self.m == 8 and prim == 0x11D) else GF2m(self.m, prim)
+        self.erasure_factor = float(spec.params.get("erasure_factor", 0.5))  # type: ignore[arg-type]
+
+    def encode(self, info_bits: Bits) -> Bits:
+        msg = _bits_to_symbols(info_bits)
+        coded = _rs_encode_symbols(self.field, msg, self.nsym, self.fcr)
+        return _symbols_to_bits(coded)
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        raise NotImplementedError("RS decode implemented in Task 4")
+
+
 def make_codec(spec: CodingSpec) -> Codec:
     if spec.family == CodeFamily.UNCODED:
         return _Uncoded(spec)
@@ -260,6 +314,8 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _Repetition(spec)
     if spec.family == CodeFamily.CONVOLUTIONAL:
         return _Convolutional(spec)
+    if spec.family == CodeFamily.REED_SOLOMON:
+        return _ReedSolomon(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -309,7 +365,30 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         CodeFamily.REED_SOLOMON,
         223 * 8,
         255 * 8,
-        {"gf_m": 8, "t": 16, "symbol_bits": 8},
+        {
+            "gf_m": 8,
+            "t": 16,
+            "symbol_bits": 8,
+            "prim_poly": 0x11D,
+            "fcr": 1,
+            "soft_input": True,
+            "erasure_factor": 0.5,
+        },
+    ),
+    "rs_255_239": CodingSpec(
+        "rs_255_239",
+        CodeFamily.REED_SOLOMON,
+        239 * 8,
+        255 * 8,
+        {
+            "gf_m": 8,
+            "t": 8,
+            "symbol_bits": 8,
+            "prim_poly": 0x11D,
+            "fcr": 1,
+            "soft_input": True,
+            "erasure_factor": 0.5,
+        },
     ),
     "bch_63_51": CodingSpec("bch_63_51", CodeFamily.BCH, 51, 63, {"gf_m": 6, "t": 2}),
     "ldpc_648_r12": CodingSpec(

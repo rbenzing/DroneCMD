@@ -167,3 +167,44 @@ def test_conv_soft_corrects_errors() -> None:
     llr[9] = -llr[9]
     llr[10] = -llr[10]  # a few flipped soft bits
     assert np.array_equal(codec.decode(llr).bits, info)  # Viterbi corrects them
+
+
+def test_rs_bit_symbol_roundtrip() -> None:
+    import numpy as np
+
+    from core.coding import _bits_to_symbols, _symbols_to_bits
+
+    syms = [0x00, 0xFF, 0x2A, 0x71, 0x80, 0x01]
+    bits = _symbols_to_bits(syms)
+    assert bits.dtype == np.uint8 and bits.size == 8 * len(syms)
+    assert _bits_to_symbols(bits) == syms
+
+
+def test_rs_encode_systematic_parity_len_and_clean_syndromes() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, _bits_to_symbols, make_codec
+    from core.galois import GF256
+
+    spec = CODING_CATALOG["rs_255_239"]  # t=8 -> 16 parity symbols
+    codec = make_codec(spec)
+    payload = bytes(range(20))
+    bits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    coded = codec.encode(bits.astype(np.uint8))
+    syms = _bits_to_symbols(coded)
+    # message (20) + 2t parity (16) = 36 symbols
+    assert len(syms) == 20 + 16
+    # a clean codeword evaluates to 0 at alpha^(fcr..fcr+2t-1)
+    for j in range(16):
+        assert GF256.poly_eval(syms, GF256.pow(2, j + 1)) == 0
+
+
+def test_rs_catalog_params() -> None:
+    from core.coding import CODING_CATALOG, CodeFamily
+
+    rs16 = CODING_CATALOG["rs_255_223"]
+    rs8 = CODING_CATALOG["rs_255_239"]
+    assert rs16.family == CodeFamily.REED_SOLOMON and rs16.params["t"] == 16
+    assert rs8.family == CodeFamily.REED_SOLOMON and rs8.params["t"] == 8
+    assert rs16.soft_input is True and rs8.soft_input is True
+    assert rs16.params["prim_poly"] == 0x11D and rs16.params["fcr"] == 1
