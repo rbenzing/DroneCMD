@@ -128,3 +128,47 @@ def test_convolutional_beats_repetition_and_uncoded() -> None:
         cp, _ = check_and_strip_crc(cframe)
         conv += int(np.sum(cp[: pbits.size] != pbits[: cp.size]))
     assert conv < rep < unc  # convolutional strongest, then repetition, then uncoded
+
+
+def test_rs_beats_uncoded_low_snr() -> None:
+    """Soft-decoded RS(255,239) BER < uncoded BER at low SNR (matched PHY BPSK).
+
+    Mirrors ``test_convolutional_beats_repetition_and_uncoded``'s harness
+    shape: fixed-seed Monte Carlo over the full synth -> channel ->
+    ``sc_soft_bits`` -> RS decode -> CRC-strip chain. 7.0 dB / 10 trials is
+    the smallest budget (measured) at which the fixed seeds land RS at zero
+    residual errors while uncoded still has some, keeping the targeted run
+    well under 30 s (RS's pure-Python BM/Chien decode is the slow part,
+    ~0.7-1.5 s per trial with errors present).
+    """
+    from core.coding import CODING_CATALOG, CODING_INTERLEAVE_DEPTH
+    from core.single_carrier import SCProfile, sc_demodulate_psk, sc_soft_bits
+
+    payload = bytes(range(24))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 7.0, 10
+    unc = rs = 0
+    prof = SCProfile(sps=64)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded
+        u = modulate(payload, ModScheme.BPSK, sps=64).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # rs_255_239 (soft Berlekamp-Massey + Chien + Forney errata decode)
+        c = modulate(
+            payload, ModScheme.BPSK, sps=64, coding=CODING_CATALOG["rs_255_239"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cl = sc_soft_bits(cn.astype(np.complex128), prof, bits_per_symbol=1)
+        cframe = (
+            make_codec(CODING_CATALOG["rs_255_239"])
+            .decode(deinterleave(cl, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        rs += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert rs < unc  # coding gain: fewer residual errors RS-coded than uncoded
