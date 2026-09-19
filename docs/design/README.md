@@ -14,3 +14,4 @@ Numbered, committed design specs for the DroneCMD signal/coding stack. Each reco
 | 0008 | P3c | [P3c Reed-Solomon](0008-p3c-reed-solomon.md) | Accepted (v0.3.0) |
 | 0009 | P3d | [P3d BCH](0009-p3d-bch.md) | Accepted (v0.3.0) |
 | 0010 | P3e | [P3e 802.11n-style LDPC](0010-p3e-ldpc.md) | Accepted (unreleased) |
+| 0011 | P3f | [P3f LTE-style turbo](0011-p3f-turbo.md) | In progress |
