@@ -105,6 +105,52 @@ def _parity(x: int) -> int:
     return bin(x).count("1") & 1
 
 
+def _puncture(
+    coded: "npt.NDArray[np.generic]", pattern: Tuple[int, ...]
+) -> "npt.NDArray[np.generic]":
+    """Remove bits according to puncture pattern (keep where pattern==1).
+
+    Args:
+        coded: Input array of coded bits or values.
+        pattern: Tuple of 0s and 1s indicating which positions to keep (1) or drop (0).
+                 Pattern repeats cyclically over the input.
+
+    Returns:
+        Array with punctured positions removed.
+    """
+    if not pattern:
+        return coded
+    mask = np.resize(np.asarray(pattern, dtype=bool), coded.size)
+    return cast("npt.NDArray[np.generic]", coded[mask])
+
+
+def _depuncture(
+    values: "npt.NDArray[np.generic]", pattern: Tuple[int, ...]
+) -> "npt.NDArray[np.generic]":
+    """Reinsert 0 at punctured positions, restoring the mother-code length.
+
+    Args:
+        values: Array of values (bits, LLRs, etc.) from the punctured code.
+        pattern: Tuple of 0s and 1s matching the puncture pattern used.
+                 Pattern repeats cyclically.
+
+    Returns:
+        Array with 0 inserted at punctured positions, restoring original length.
+    """
+    if not pattern:
+        return values
+    period = len(pattern)
+    ones = sum(pattern)
+    full_len = int(values.size) * period // ones
+    out = np.zeros(full_len, dtype=values.dtype)
+    j = 0
+    for i in range(full_len):
+        if pattern[i % period]:
+            out[i] = values[j]
+            j += 1
+    return out
+
+
 def _conv_encode(info_bits: Bits, generators: Tuple[int, int], k: int) -> Bits:
     """Rate-1/2, constraint-length-k convolutional encode with zero-tail.
 
@@ -138,7 +184,7 @@ class _Convolutional:
 
     def encode(self, info_bits: Bits) -> Bits:
         coded = _conv_encode(info_bits, self.generators, self.k)
-        return coded  # puncturing added in Task 2
+        return cast(Bits, _puncture(coded, self.puncture))
 
     def decode(self, received: SoftOrHard) -> DecodeResult:
         raise NotImplementedError("convolutional decode: P3b Task 3")
@@ -168,6 +214,30 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         {
             "constraint_length": 7,
             "generators_octal": (0o133, 0o171),
+            "soft_input": True,
+        },
+    ),
+    "conv_k7_r23": CodingSpec(
+        "conv_k7_r23",
+        CodeFamily.CONVOLUTIONAL,
+        2,
+        3,
+        {
+            "constraint_length": 7,
+            "generators_octal": (0o133, 0o171),
+            "puncture": (1, 1, 1, 0),
+            "soft_input": True,
+        },
+    ),
+    "conv_k7_r34": CodingSpec(
+        "conv_k7_r34",
+        CodeFamily.CONVOLUTIONAL,
+        3,
+        4,
+        {
+            "constraint_length": 7,
+            "generators_octal": (0o133, 0o171),
+            "puncture": (1, 1, 1, 0, 0, 1),
             "soft_input": True,
         },
     ),

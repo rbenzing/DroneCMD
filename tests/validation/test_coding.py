@@ -106,3 +106,35 @@ def test_make_codec_builds_convolutional() -> None:
 
     codec = make_codec(CODING_CATALOG["conv_k7_r12"])
     assert codec.spec.family.value == "convolutional"
+
+
+def test_puncture_lengths_and_depuncture_roundtrip() -> None:
+    import numpy as np
+
+    from core.coding import _depuncture, _puncture
+
+    x = np.arange(24, dtype=np.uint8) % 2
+    p23 = _puncture(x, (1, 1, 1, 0))  # keep 3 of every 4
+    assert p23.size == 24 * 3 // 4
+    p34 = _puncture(x, (1, 1, 1, 0, 0, 1))  # keep 4 of every 6
+    assert p34.size == 24 * 4 // 6
+    # de-puncture reinserts erasures (0) at punctured positions, restoring length
+    d = _depuncture(p23.astype(np.float64), (1, 1, 1, 0))
+    assert d.size == 24 and np.all(d[3::4] == 0.0)  # punctured slots are 0
+
+
+def test_convolutional_punctured_encode_lengths() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, _puncture, make_codec
+
+    info = np.array([1, 0, 1, 1, 0, 0, 1, 0], dtype=np.uint8)
+    b12 = make_codec(CODING_CATALOG["conv_k7_r12"]).encode(info)
+    assert (
+        make_codec(CODING_CATALOG["conv_k7_r23"]).encode(info).size
+        == _puncture(b12, (1, 1, 1, 0)).size
+    )
+    assert (
+        make_codec(CODING_CATALOG["conv_k7_r34"]).encode(info).size
+        == _puncture(b12, (1, 1, 1, 0, 0, 1)).size
+    )
