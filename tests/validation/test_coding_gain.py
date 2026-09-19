@@ -270,18 +270,16 @@ def test_bch_beats_uncoded_low_snr() -> None:
 def test_turbo_beats_uncoded_awgn_llr() -> None:
     """Turbo (rate-1/3) coding gain on a controlled AWGN-LLR channel.
 
-    Unlike the RS/BCH/LDPC gain tests (synth -> ``sc_soft_bits``), turbo's gain
-    is measured on a clean AWGN-LLR channel with a KNOWN noise variance -- the
-    standard way coding gain is characterized. This is necessary here because
-    the shared soft-demod (``sc_soft_bits``/sync) emits ~40-63% wrong-*sign*
-    LLRs on ~40% of frames at the low SNR where a strong code shows gain (a
-    phase/sync issue in ``core/single_carrier.py``, independent of turbo --
-    filed as a separate finding). No FEC corrects 60% sign errors, so an
-    end-to-end test at turbo's gain SNR would measure that demod bug, not the
-    code. The turbo decoder's correctness is established by
-    ``tests/validation/test_turbo.py`` (noiseless / error-correction /
-    scale-invariance) and the codec-level noisy round-trip in
-    ``test_coding.py``; this test isolates and confirms its coding gain.
+    Complementary to ``test_turbo_beats_uncoded_end_to_end_soft_demod``: this
+    one measures gain on a clean AWGN-LLR channel with a KNOWN noise variance
+    -- the standard textbook way coding gain is characterized -- isolating the
+    decoder from any demod/sync effect. (It was originally the *only* turbo
+    gain test because the shared soft-demod emitted ~40-63% wrong-*sign* LLRs
+    at low SNR, a phase-ramp defect since fixed in ``core/single_carrier.py``;
+    see ADR-0015 and the end-to-end companion test.) The turbo decoder's
+    correctness is further established by ``tests/validation/test_turbo.py``
+    (noiseless / error-correction / scale-invariance) and the codec-level
+    noisy round-trip in ``test_coding.py``.
     """
     from core.coding import check_and_strip_crc, frame_with_crc
 
@@ -310,3 +308,50 @@ def test_turbo_beats_uncoded_awgn_llr() -> None:
         )
         unc += int(np.sum((yu < 0).astype(np.uint8) != pbits))
     assert tur < unc  # coding gain on a controlled AWGN-LLR channel
+
+
+def test_turbo_beats_uncoded_end_to_end_soft_demod() -> None:
+    """Turbo (rate-1/3) coding gain END-TO-END through the real ``sc_soft_bits``.
+
+    Now that the soft-demod phase-ramp defect is fixed (decision-directed
+    payload tracking + the lower-variance L&R CFO estimator in
+    ``core/single_carrier.py``; see ADR-0015), turbo shows genuine coding gain
+    through the same synth -> ``sc_soft_bits`` -> soft-decode chain the
+    RS/LDPC gain tests use -- not only on the controlled AWGN-LLR channel of
+    ``test_turbo_beats_uncoded_awgn_llr``. Before the fix this was impossible:
+    the demod emitted ~40-63% wrong-*sign* LLRs on ~40% of low-SNR frames, so
+    turbo decoded far *worse* than uncoded end-to-end. Payload is 30 bytes
+    (240 + 16 CRC = 256 = ``block_k``, light shortening). 6.0 dB / 8 trials
+    (measured) lands turbo at zero residual errors while uncoded still errs.
+    """
+    from core.coding import CODING_CATALOG, CODING_INTERLEAVE_DEPTH
+    from core.single_carrier import SCProfile, sc_demodulate_psk, sc_soft_bits
+
+    payload = bytes(range(30))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 6.0, 8
+    unc = tur = 0
+    prof = SCProfile(sps=8)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded reference through the hard demod
+        u = modulate(payload, ModScheme.BPSK, sps=8).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # turbo_r13 through the soft demod (sc_soft_bits) + iterative decode
+        c = modulate(
+            payload, ModScheme.BPSK, sps=8, coding=CODING_CATALOG["turbo_r13"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cl = sc_soft_bits(cn.astype(np.complex128), prof, bits_per_symbol=1)
+        cframe = (
+            make_codec(CODING_CATALOG["turbo_r13"])
+            .decode(deinterleave(cl, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        tur += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert tur < unc  # end-to-end coding gain through the (fixed) soft demod
