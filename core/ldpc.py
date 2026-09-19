@@ -117,3 +117,61 @@ def encode(code: LdpcCode, info_bits: Bits) -> Bits:
         parity[i * Z : (i + 1) * Z] = pblk
         prev = pblk
     return cast(Bits, np.concatenate([info, parity]).astype(np.uint8))
+
+
+def decode_min_sum(
+    code: LdpcCode,
+    llr: "npt.NDArray[np.float64]",
+    max_iters: int = 50,
+    norm: float = 0.8,
+) -> Bits:
+    ch = np.asarray(llr, dtype=np.float64)
+    # check->var messages, indexed [c][v]
+    mcv: List[Dict[int, float]] = [
+        {v: 0.0 for v in code.checks[c]} for c in range(code.m)
+    ]
+    hard = (ch < 0).astype(np.uint8)
+    for _ in range(max_iters):
+        # variable totals = channel + sum incoming check msgs
+        total = ch.copy()
+        for c in range(code.m):
+            for v in code.checks[c]:
+                total[v] += mcv[c][v]
+        # check-node update (normalized min-sum)
+        for c in range(code.m):
+            vs = code.checks[c]
+            inc = [total[v] - mcv[c][v] for v in vs]
+            sign_prod = 1.0
+            m1 = m2 = float("inf")
+            arg = -1
+            for idx, x in enumerate(inc):
+                if x < 0:
+                    sign_prod = -sign_prod
+                a = abs(x)
+                if a < m1:
+                    m2 = m1
+                    m1 = a
+                    arg = idx
+                elif a < m2:
+                    m2 = a
+            for idx, v in enumerate(vs):
+                s_other = sign_prod * (-1.0 if inc[idx] < 0 else 1.0)
+                mag = m2 if idx == arg else m1
+                mcv[c][v] = norm * s_other * mag
+        # hard decision + parity check
+        total = ch.copy()
+        for c in range(code.m):
+            for v in code.checks[c]:
+                total[v] += mcv[c][v]
+        hard = (total < 0).astype(np.uint8)
+        satisfied = True
+        for c in range(code.m):
+            acc = 0
+            for v in code.checks[c]:
+                acc ^= int(hard[v])
+            if acc:
+                satisfied = False
+                break
+        if satisfied:
+            break
+    return hard

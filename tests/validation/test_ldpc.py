@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from core.ldpc import MB, NB, Z, build_base, build_code, encode
+from core.ldpc import MB, NB, Z, build_base, build_code, decode_min_sum, encode
 
 
 @pytest.mark.parametrize("rate", ["1/2", "2/3", "3/4"])
@@ -57,3 +57,38 @@ def test_encode_systematic_and_zero_syndrome(rate: str) -> None:
     # H * cw^T == 0 over GF(2): every check parity is even
     for c in range(code.m):
         assert sum(int(cw[v]) for v in code.checks[c]) % 2 == 0
+
+
+@pytest.mark.parametrize("rate", ["1/2", "2/3", "3/4"])
+def test_noiseless_roundtrip(rate: str) -> None:
+    code = build_code(rate, seed=802)
+    rng = np.random.default_rng(2)
+    info = rng.integers(0, 2, size=code.k).astype(np.uint8)
+    cw = encode(code, info)
+    llr = np.where(cw == 0, 8.0, -8.0).astype(np.float64)  # clean
+    hard = decode_min_sum(code, llr)
+    assert np.array_equal(hard[: code.k], info)
+
+
+def test_corrects_errors_rate_half() -> None:
+    code = build_code("1/2", seed=802)
+    rng = np.random.default_rng(3)
+    info = rng.integers(0, 2, size=code.k).astype(np.uint8)
+    cw = encode(code, info)
+    llr = np.where(cw == 0, 4.0, -4.0).astype(np.float64)
+    for p in (5, 50, 120, 300, 600):  # flip a handful of soft bits
+        llr[p] = -llr[p]
+    assert np.array_equal(decode_min_sum(code, llr)[: code.k], info)
+
+
+def test_scale_invariance() -> None:
+    code = build_code("1/2", seed=802)
+    rng = np.random.default_rng(4)
+    info = rng.integers(0, 2, size=code.k).astype(np.uint8)
+    cw = encode(code, info)
+    llr = np.where(cw == 0, 3.0, -3.0).astype(np.float64)
+    for p in (10, 200, 400):
+        llr[p] = -llr[p]
+    base = decode_min_sum(code, llr)
+    for k in (1e-3, 5.0, 1e3):
+        assert np.array_equal(decode_min_sum(code, k * llr), base)
