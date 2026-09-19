@@ -15,6 +15,7 @@ from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 import numpy as np
 import numpy.typing as npt
 
+from core import ldpc as _ldpc_mod
 from core.galois import GF256, GF2m, berlekamp_massey, chien_search
 
 Bits = npt.NDArray[np.uint8]
@@ -471,6 +472,52 @@ class _BCH:
             return DecodeResult(bits=bits[:k], meta={"decode_ok": False})
 
 
+class _LDPC:
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.rate = str(spec.params["rate"])  # type: ignore[index]
+        self.seed = int(spec.params.get("seed", 802))  # type: ignore[arg-type]
+        self.max_iters = int(spec.params.get("max_iters", 50))  # type: ignore[arg-type]
+        self.norm = float(spec.params.get("norm_factor", 0.8))  # type: ignore[arg-type]
+        self.code = _ldpc_mod.build_code(self.rate, self.seed)
+
+    def encode(self, info_bits: Bits) -> Bits:
+        info = np.asarray(info_bits, dtype=np.uint8)
+        k = self.code.k
+        if info.size > k:
+            raise ValueError("payload exceeds LDPC k")
+        padded = np.zeros(k, dtype=np.uint8)
+        padded[: info.size] = info
+        cw = _ldpc_mod.encode(self.code, padded)
+        # shorten: transmit real info + parity (drop the known-zero pad)
+        parity = cw[k:]
+        out = np.concatenate([info, parity]).astype(np.uint8)
+        self._info_len = int(info.size)  # for decode symmetry via meta not needed
+        return cast(Bits, out)
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        r = np.asarray(received)
+        llr_in = (
+            r.astype(np.float64)
+            if r.dtype.kind == "f"
+            else (1.0 - 2.0 * r.astype(np.float64)) * 8.0
+        )
+        k = self.code.k
+        parity_len = self.code.n - k
+        info_len = int(llr_in.size) - parity_len
+        if info_len <= 0:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8), meta={"decode_ok": False}
+            )
+        full = np.empty(self.code.n, dtype=np.float64)
+        full[:info_len] = llr_in[:info_len]
+        full[info_len:k] = 1e6  # known-zero shortened bits: very confident 0
+        full[k:] = llr_in[info_len:]
+        hard = _ldpc_mod.decode_min_sum(self.code, full, self.max_iters, self.norm)
+        bits = hard[:info_len].astype(np.uint8)
+        return DecodeResult(bits=cast(Bits, bits), meta={"decode_ok": True})
+
+
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:
     """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
     coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
@@ -512,6 +559,8 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _ReedSolomon(spec)
     if spec.family == CodeFamily.BCH:
         return _BCH(spec)
+    if spec.family == CodeFamily.LDPC:
+        return _LDPC(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -596,7 +645,43 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         "bch_255_223", CodeFamily.BCH, 223, 255, {"gf_m": 8, "t": 4, "prim_poly": 0x11D}
     ),
     "ldpc_648_r12": CodingSpec(
-        "ldpc_648_r12", CodeFamily.LDPC, 324, 648, {"soft_input": True, "max_iters": 50}
+        "ldpc_648_r12",
+        CodeFamily.LDPC,
+        324,
+        648,
+        {
+            "soft_input": True,
+            "rate": "1/2",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
+    ),
+    "ldpc_648_r23": CodingSpec(
+        "ldpc_648_r23",
+        CodeFamily.LDPC,
+        432,
+        648,
+        {
+            "soft_input": True,
+            "rate": "2/3",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
+    ),
+    "ldpc_648_r34": CodingSpec(
+        "ldpc_648_r34",
+        CodeFamily.LDPC,
+        486,
+        648,
+        {
+            "soft_input": True,
+            "rate": "3/4",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
     ),
     "turbo_r13": CodingSpec(
         "turbo_r13",
