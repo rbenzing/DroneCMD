@@ -208,3 +208,70 @@ def test_rs_catalog_params() -> None:
     assert rs8.family == CodeFamily.REED_SOLOMON and rs8.params["t"] == 8
     assert rs16.soft_input is True and rs8.soft_input is True
     assert rs16.params["prim_poly"] == 0x11D and rs16.params["fcr"] == 1
+
+
+def _rs_codec(name: str):
+    from core.coding import CODING_CATALOG, make_codec
+
+    return make_codec(CODING_CATALOG[name])
+
+
+def test_rs_noiseless_roundtrip_both_codes() -> None:
+    import numpy as np
+
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    for name in ("rs_255_223", "rs_255_239"):
+        codec = _rs_codec(name)
+        payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+        frame = frame_with_crc(payload.astype(np.uint8))
+        coded = codec.encode(frame)
+        out = codec.decode(coded)  # hard bits in
+        recovered, ok = check_and_strip_crc(out.bits)
+        assert ok and np.array_equal(recovered, payload)
+
+
+def test_rs_corrects_up_to_t_symbol_errors() -> None:
+    import numpy as np
+
+    from core.coding import (
+        _bits_to_symbols,
+        _symbols_to_bits,
+        check_and_strip_crc,
+        frame_with_crc,
+    )
+
+    codec = _rs_codec("rs_255_239")  # t=8
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    coded = codec.encode(frame)
+    syms = _bits_to_symbols(coded)
+    for p in range(8):  # flip 8 = t symbols
+        syms[p] ^= 0x5A
+    corrupted = _symbols_to_bits(syms)
+    out = codec.decode(corrupted)
+    recovered, ok = check_and_strip_crc(out.bits)
+    assert ok and np.array_equal(recovered, payload)
+
+
+def test_rs_fails_loudly_beyond_t() -> None:
+    import numpy as np
+
+    from core.coding import (
+        _bits_to_symbols,
+        _symbols_to_bits,
+        check_and_strip_crc,
+        frame_with_crc,
+    )
+
+    codec = _rs_codec("rs_255_239")  # t=8
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    coded = codec.encode(frame)
+    syms = _bits_to_symbols(coded)
+    for p in range(12):  # 12 > t=8 symbol errors: uncorrectable
+        syms[p] ^= 0x5A
+    corrupted = _symbols_to_bits(syms)
+    out = codec.decode(corrupted)
+    _, ok = check_and_strip_crc(out.bits)
+    assert ok is False  # loud failure, not a silent wrong payload

@@ -9,18 +9,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 from typing import Optional  # noqa: F401; used in Task 4 (RS decode)
+from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 
 import numpy as np
 import numpy.typing as npt
 
-from core.galois import (  # noqa: F401; used in Task 4 (RS decode)
-    GF256,
-    GF2m,
-    berlekamp_massey,
-    chien_search,
-)
+from core.galois import GF256, GF2m, berlekamp_massey, chien_search
 
 Bits = npt.NDArray[np.uint8]
 LLRs = npt.NDArray[np.float64]
@@ -287,6 +282,60 @@ def _rs_encode_symbols(field: GF2m, msg: List[int], nsym: int, fcr: int) -> List
     return msg + remainder
 
 
+def _rs_syndromes(field: GF2m, r: List[int], nsym: int, fcr: int) -> List[int]:
+    # leading 0 pad matches the BM/forney indexing convention
+    return [0] + [field.poly_eval(r, field.pow(2, j + fcr)) for j in range(nsym)]
+
+
+def _rs_errata_locator(field: GF2m, e_pos_rev: List[int]) -> List[int]:
+    e_loc = [1]
+    for i in e_pos_rev:
+        e_loc = field.poly_mul(e_loc, field.poly_add([1], [field.pow(2, i), 0]))
+    return e_loc
+
+
+def _rs_error_evaluator(
+    field: GF2m, synd: List[int], err_loc: List[int], nsym: int
+) -> List[int]:
+    _, rem = field.poly_div(field.poly_mul(synd, err_loc), [1] + [0] * (nsym + 1))
+    return rem
+
+
+def _rs_correct_errata(
+    field: GF2m, r: List[int], synd: List[int], err_pos: List[int], fcr: int
+) -> List[int]:
+    n = len(r)
+    coef_pos = [n - 1 - p for p in err_pos]
+    err_loc = _rs_errata_locator(field, coef_pos)
+    err_eval = _rs_error_evaluator(field, synd[::-1], err_loc, len(err_loc) - 1)[::-1]
+    x_list = [field.pow(2, p) for p in coef_pos]
+    e = [0] * n
+    for i, xi in enumerate(x_list):
+        xi_inv = field.inv(xi)
+        prime = 1
+        for j in range(len(x_list)):
+            if j != i:
+                prime = field.mul(prime, field.add(1, field.mul(xi_inv, x_list[j])))
+        y = field.poly_eval(err_eval[::-1], xi_inv)
+        y = field.mul(field.pow(xi, 1 - fcr), y)
+        if prime == 0:
+            raise ValueError("singular errata magnitude")
+        e[err_pos[i]] = field.div(y, prime)
+    return field.poly_add(r, e)[-n:]
+
+
+def _rs_forney_syndromes(
+    field: GF2m, synd: List[int], pos: List[int], n: int
+) -> List[int]:
+    pos_rev = [n - 1 - p for p in pos]
+    fsynd = list(synd[1:])
+    for i in range(len(pos)):
+        x = field.pow(2, pos_rev[i])
+        for j in range(len(fsynd) - 1):
+            fsynd[j] = field.mul(fsynd[j], x) ^ fsynd[j + 1]
+    return fsynd
+
+
 class _ReedSolomon:
     def __init__(self, spec: CodingSpec) -> None:
         self.spec = spec
@@ -303,8 +352,58 @@ class _ReedSolomon:
         coded = _rs_encode_symbols(self.field, msg, self.nsym, self.fcr)
         return _symbols_to_bits(coded)
 
+    def _decode_symbols(
+        self, r: List[int], erase_pos: List[int]
+    ) -> Tuple[List[int], bool]:
+        n = len(r)
+        k = n - self.nsym
+        if k <= 0:
+            return [], False
+        if len(erase_pos) > self.nsym:
+            return r[:k], False  # too many erasures alone
+        synd = _rs_syndromes(self.field, r, self.nsym, self.fcr)
+        if max(synd) == 0:
+            return r[:k], True  # clean
+        try:
+            fsynd = _rs_forney_syndromes(self.field, synd, erase_pos, n)
+            err_loc = berlekamp_massey(
+                self.field,
+                fsynd,
+                self.nsym,
+                erase_loc=_rs_errata_locator(self.field, [n - 1 - p for p in erase_pos])
+                if erase_pos
+                else None,
+                erase_count=len(erase_pos),
+            )
+            err_pos = chien_search(self.field, err_loc[::-1], n)
+            corrected = _rs_correct_errata(
+                self.field, r, synd, erase_pos + err_pos, self.fcr
+            )
+            check = _rs_syndromes(self.field, corrected, self.nsym, self.fcr)
+            if max(check) != 0:
+                return r[:k], False
+            return corrected[:k], True
+        except (ValueError, ZeroDivisionError):
+            return r[:k], False
+
+    def _erasures_from_llrs(self, llrs: "npt.NDArray[np.float64]") -> List[int]:
+        return []  # Task 5: reliability-based erasure flagging
+
     def decode(self, received: SoftOrHard) -> DecodeResult:
-        raise NotImplementedError("RS decode implemented in Task 4")
+        r_arr = np.asarray(received)
+        if r_arr.dtype.kind == "f":
+            hard = (cast(npt.NDArray[np.float64], r_arr) < 0).astype(np.uint8)
+            erase_pos = self._erasures_from_llrs(cast(npt.NDArray[np.float64], r_arr))
+        else:
+            hard = cast(npt.NDArray[np.uint8], r_arr).astype(np.uint8)
+            erase_pos = []
+        usable = (hard.size // 8) * 8
+        syms = _bits_to_symbols(hard[:usable])
+        msg_syms, ok = self._decode_symbols(syms, erase_pos)
+        bits = _symbols_to_bits(msg_syms) if msg_syms else np.zeros(0, dtype=np.uint8)
+        return DecodeResult(
+            bits=bits, meta={"decode_ok": ok, "n_erasures": len(erase_pos)}
+        )
 
 
 def make_codec(spec: CodingSpec) -> Codec:
