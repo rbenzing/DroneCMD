@@ -394,6 +394,24 @@ def test_rs_bpsk_blind_end_to_end() -> None:
     assert out[: len(payload)] == payload
 
 
+def test_bch_bpsk_blind_end_to_end() -> None:
+    from core.coding import CODING_CATALOG
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(24))
+    iq = modulate(
+        payload, ModScheme.BPSK, sps=128, coding=CODING_CATALOG["bch_255_223"]
+    ).astype(np.complex128)
+    rng = np.random.default_rng(1)
+    noise = (rng.standard_normal(iq.size) + 1j * rng.standard_normal(iq.size)) * 0.1
+    rx = (iq + noise).astype(np.complex64)
+    out, name = single_carrier_region_to_bytes(rx, 1e6)
+    assert name == "bch_bpsk"
+    assert out[: len(payload)] == payload
+
+
 def test_pipeline_records_resolved_ofdm_profile() -> None:
     from validation import create_synth_dataset
     from validation.pipeline import DetectClassifyPipeline

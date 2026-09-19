@@ -172,3 +172,46 @@ def test_rs_beats_uncoded_low_snr() -> None:
         rp, _ = check_and_strip_crc(cframe)
         rs += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
     assert rs < unc  # coding gain: fewer residual errors RS-coded than uncoded
+
+
+def test_bch_beats_uncoded_low_snr() -> None:
+    """Hard-decoded BCH(255,223) t=4 BER < uncoded BER at low SNR (matched PHY BPSK).
+
+    Mirrors ``test_rs_beats_uncoded_low_snr``'s harness shape but through the
+    HARD demod branch (``sc_demodulate_psk``, not ``sc_soft_bits``) since BCH
+    is a hard-input code (``CODING_CATALOG["bch_255_223"].soft_input is
+    False``). 5.0 dB / 8 trials (measured) is the smallest budget at which
+    the fixed seeds land BCH at zero residual errors while uncoded still has
+    several, keeping the targeted run well under 30 s (BCH's pure-Python
+    BM/Chien decode is the slow part, ~1.5 s per trial).
+    """
+    payload = bytes(range(24))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 5.0, 8
+    unc = bch = 0
+    prof = SCProfile(sps=64)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded
+        u = modulate(payload, ModScheme.BPSK, sps=64).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # bch_255_223 (hard-decision syndromes + Berlekamp-Massey + Chien + bit-flip)
+        c = modulate(
+            payload, ModScheme.BPSK, sps=64, coding=CODING_CATALOG["bch_255_223"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cb = sc_demodulate_psk(
+            cn.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        cframe = (
+            make_codec(CODING_CATALOG["bch_255_223"])
+            .decode(deinterleave(cb, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        bch += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert bch < unc  # coding gain: fewer residual errors BCH-coded than uncoded
