@@ -174,6 +174,56 @@ def test_rs_beats_uncoded_low_snr() -> None:
     assert rs < unc  # coding gain: fewer residual errors RS-coded than uncoded
 
 
+def test_ldpc_beats_uncoded_low_snr() -> None:
+    """Soft-decoded LDPC(648,324) r=1/2 BER < uncoded BER at low SNR (matched PHY BPSK).
+
+    Mirrors ``test_rs_beats_uncoded_low_snr``'s harness shape through the SOFT
+    demod branch (``sc_soft_bits``, since ``CODING_CATALOG["ldpc_648_r12"]
+    .soft_input`` is True) into the normalized min-sum decoder. Payload is 38
+    bytes (304 payload bits + 16 CRC bits = 320 info bits, just under
+    ``k=324``) so the shortened codeword sits at (near) the code's nominal
+    rate-1/2 instead of losing several dB to heavy shortening overhead --
+    iterative LDPC decoding has a sharp waterfall, and below-threshold
+    operation can decode *worse* than uncoded (false convergence), so getting
+    close to the design rate matters for a clean gain demo. 7.2 dB / 15
+    trials (measured) is the smallest budget at which the fixed seeds land
+    LDPC at zero residual errors while uncoded still has some, keeping the
+    targeted run well under 30 s (~5 s measured; pure-Python min-sum is the
+    slow part but converges quickly this close to/above threshold).
+    """
+    from core.coding import CODING_CATALOG, CODING_INTERLEAVE_DEPTH
+    from core.single_carrier import SCProfile, sc_demodulate_psk, sc_soft_bits
+
+    payload = bytes(range(38))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 7.2, 15
+    unc = ldp = 0
+    prof = SCProfile(sps=16)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded
+        u = modulate(payload, ModScheme.BPSK, sps=16).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # ldpc_648_r12 (soft normalized min-sum decode)
+        c = modulate(
+            payload, ModScheme.BPSK, sps=16, coding=CODING_CATALOG["ldpc_648_r12"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cl = sc_soft_bits(cn.astype(np.complex128), prof, bits_per_symbol=1)
+        cframe = (
+            make_codec(CODING_CATALOG["ldpc_648_r12"])
+            .decode(deinterleave(cl, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        ldp += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert ldp < unc  # coding gain: fewer residual errors LDPC-coded than uncoded
+
+
 def test_bch_beats_uncoded_low_snr() -> None:
     """Hard-decoded BCH(255,223) t=4 BER < uncoded BER at low SNR (matched PHY BPSK).
 
