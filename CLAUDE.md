@@ -112,16 +112,22 @@ Use `asyncio.run()` for top-level async calls. Use `asyncio.create_task()` for b
 
 ### Module Map
 
-- **`core/`** — Enhanced signal processing: `capture.py` (SDR capture), `demodulation.py` (FM/AM/FSK/GFSK/QPSK), `classification.py` (ML-based protocol ID), `fhss.py` (FHSS + FCC compliance), `signal_processing.py` (DSP/FFT utilities), `replay.py` (signal replay), `parsing.py` (packet parsing)
+- **`core/`** — Enhanced signal processing: `capture.py` (SDR capture), `demodulation.py` (FM/AM/FSK/GFSK/QPSK), `classification.py` (ML-based protocol ID), `fhss.py` (FHSS + FCC compliance), `signal_processing.py` (DSP/FFT utilities), `replay.py` (signal replay), `parsing.py` (packet parsing), `ofdm.py` (OFDM demod chain), `single_carrier.py` (single-carrier receivers + soft-LLR demod), `profiles.py` (parametric link-profile catalog, profile-carried coding), `blind.py` (blind profile resolution: sync gate + trial-demod EVM tiebreak), `coding.py` (channel-coding framework: `Codec` registry, CRC framing, interleaver, convolutional/Viterbi + Reed-Solomon + BCH codecs), `galois.py` (field-parametric GF(2^m) algebra + Berlekamp-Massey + Chien, shared by RS/BCH)
 - **`capture/`** — Simple capture layer: `manager.py`, `detector.py`, `sniffer.py`
 - **`plugins/`** — Protocol plugin system: `base.py` (abstract base classes), `registry.py` (discovery), `protocols/` (DJI, Parrot, generic, `_template.py`)
 - **`utils/`** — Cross-cutting: `config.py` (YAML config + profiles), `logging.py`, `fileio.py` (IQ file formats), `crypto.py`, `compat.py`
 - **`injector/`** — Packet injection: `suringe.py` (injection engine), `obfuscation.py`
 - **`training/`** — Classifier training pipeline: `dataset.py` (feature extraction from labeled captures), `train.py` (sklearn ensemble training + cross-validation)
-- **`validation/`** — Validation & Test-and-Evaluation (T&E) spine: synthetic signal generator + calibrated channel model (`synth/`), real-capture ingestion (`ingest/`), unified SigMF-backed `LabeledDataset` (`dataset.py`), injectable detect→demod→classify `pipeline.py`, detection/classification metrics with bootstrap CIs (`metrics.py`), evaluation `harness.py`, JSON `report.py`, reproducibility manifest (`repro.py`). Library-first public API in `validation/__init__.py`; driven by `dronecmd validate`
+- **`validation/`** — Validation & Test-and-Evaluation (T&E) spine: synthetic signal generator + calibrated channel model (`synth/`, including coded modulation via `modulate(coding=...)`), real-capture ingestion (`ingest/`), unified SigMF-backed `LabeledDataset` (`dataset.py`), injectable detect→demod→classify `pipeline.py` (with soft/hard coded-decode branches and blind link resolution), detection/classification metrics **plus the coded-link (coded BER/FER) metric** with bootstrap CIs (`metrics.py`), evaluation `harness.py`, JSON `report.py`, reproducibility manifest (`repro.py`). Library-first public API in `validation/__init__.py`; driven by `dronecmd validate`
 - **`cli.py`** — argparse-based CLI (subcommands: `capture`, `analyze`, `replay`, `generate`, `convert`, `config`, `info`, `train`, `validate`) with JSON output support
 - **`constants.py`** — RF frequency ranges, sample rates, protocol constants
 - **`exceptions.py`** — Custom exception hierarchy
+
+### Design Docs & Decisions
+
+- **`docs/adr/`** — Architecture Decision Records (Nygard-style): the committed source of truth for *why* the architecture is the way it is. Start at `docs/adr/README.md`.
+- **`docs/design/`** — Numbered, committed per-phase design specs (the detailed *how* of each capability).
+- Detailed implementation plans and per-task execution ledgers stay **local/git-ignored** under `docs/superpowers/` and `.superpowers/` (see ADR-0011). When you add a capability, keep the module map above, the relevant ADR, and README.md in sync.
 
 ### Plugin System
 

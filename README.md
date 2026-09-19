@@ -30,6 +30,9 @@
 | Capability | Description |
 |---|---|
 | Live IQ Capture | HackRF / RTL-SDR with async streaming and USB overrun recovery |
+| OFDM & Single-Carrier RX | Full OFDM demod chain and single-carrier receivers with CFO/phase recovery |
+| Blind Link Resolution | Recognizes the PHY with no prior — single-carrier `sps`, OFDM FFT size / cyclic prefix — via a sync gate + trial-demod EVM tiebreak |
+| Channel Coding (FEC) | Convolutional + soft Viterbi, Reed-Solomon (errors + erasures), and BCH — with coded BER/FER measured end-to-end |
 | Protocol Classification | Sklearn ensemble trained on your own labeled IQ captures |
 | Packet Parsing | MAVLink v1/v2, DJI OcuSync/Lightbridge, generic protocol analysis |
 | FHSS Engine | Frequency hopping with FCC CFR 47 §15.247 compliance enforcement |
@@ -153,14 +156,16 @@ classify the resulting bytes.
 
 **Module map:**
 
-- `core/` — Signal pipeline: `capture`, `demodulation`, `classification`, `fhss`, `signal_processing`, `replay`, `parsing`
+- `core/` — Signal pipeline: `capture`, `demodulation`, `classification`, `fhss`, `signal_processing`, `replay`, `parsing`; OFDM & single-carrier receivers (`ofdm`, `single_carrier`); link-profile catalog + blind resolution (`profiles`, `blind`); channel coding (`coding`, and `galois` — the reusable GF(2^m) algebra for Reed-Solomon/BCH)
 - `capture/` — Simple layer: `manager`, `detector`, `sniffer`
 - `injector/` — Packet injection engine with FCC compliance enforcement
 - `plugins/` — Protocol plugin system: `base`, `registry`, `protocols/` (DJI, Parrot, generic)
 - `training/` — Classifier training pipeline: `dataset`, `train`
-- `validation/` — Validation & T&E spine: synthetic + real ground truth → detect→classify metrics (Pd/Pfa, ROC, accuracy-vs-SNR) with bootstrap CIs and a reproducibility manifest (`dronecmd validate`)
+- `validation/` — Validation & T&E spine: synthetic + real ground truth → detect→classify metrics (Pd/Pfa, ROC, accuracy-vs-SNR) plus the coded-link (coded BER/FER) metric and blind link resolution, with bootstrap CIs and a reproducibility manifest (`dronecmd validate`)
 - `utils/` — IQ file I/O, YAML config, logging, crypto, compat
 - `cli.py` — argparse-based CLI entry point
+
+**Design & decisions:** architecture rationale lives in [`docs/adr/`](docs/adr/) (Architecture Decision Records) and per-phase design specs in [`docs/design/`](docs/design/).
 
 ---
 
@@ -188,7 +193,7 @@ pytest tests/test_fhss.py -v                    # Single file
 pytest -n auto                                  # Parallel execution
 ```
 
-170+ tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default; CI runs the full suite on Python 3.9–3.12 for every push and PR.
+230+ tests, no hardware required. Hardware-dependent tests are marked `@pytest.mark.hardware` and excluded by default; CI runs the full suite on Python 3.9–3.12 for every push and PR.
 
 ---
 
