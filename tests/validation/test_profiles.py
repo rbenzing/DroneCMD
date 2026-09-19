@@ -20,6 +20,7 @@ def test_catalog_has_expected_entries() -> None:
         "psk_c2",
         "qpsk_link",
         "rep_bpsk",
+        "conv_bpsk",
     }
     assert "wifi_20" in OFDM_CATALOG
 
@@ -121,3 +122,24 @@ def test_rep_bpsk_blind_resolves() -> None:
     iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=16).astype(np.complex128)
     spec, _ = resolve_sc_profile(iq)
     assert spec is not None and spec.name == "rep_bpsk"
+
+
+def test_conv_bpsk_profile() -> None:
+    from core.coding import CODING_CATALOG
+    from core.profiles import SC_CATALOG, coding_of
+
+    assert coding_of("conv_bpsk") == "conv_k7_r12"
+    assert SC_CATALOG["conv_bpsk"].coding in CODING_CATALOG
+    assert SC_CATALOG["conv_bpsk"].profile.sps == 32
+
+
+def test_conv_bpsk_blind_resolves() -> None:
+    import numpy as np
+
+    from core.blind import resolve_sc_profile
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=32).astype(np.complex128)
+    spec, _ = resolve_sc_profile(iq)
+    assert spec is not None and spec.name == "conv_bpsk"
