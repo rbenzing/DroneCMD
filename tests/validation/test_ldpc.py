@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from core.ldpc import MB, NB, Z, build_base, build_code
+from core.ldpc import MB, NB, Z, build_base, build_code, encode
 
 
 @pytest.mark.parametrize("rate", ["1/2", "2/3", "3/4"])
@@ -44,3 +44,16 @@ def test_build_code_shape_and_determinism(rate: str) -> None:
     assert len(code.checks) == code.m and len(code.vars) == code.n
     # determinism: same seed -> identical base matrix
     assert np.array_equal(code.B, build_code(rate, seed=802).B)
+
+
+@pytest.mark.parametrize("rate", ["1/2", "2/3", "3/4"])
+def test_encode_systematic_and_zero_syndrome(rate: str) -> None:
+    code = build_code(rate, seed=802)
+    rng = np.random.default_rng(1)
+    info = rng.integers(0, 2, size=code.k).astype(np.uint8)
+    cw = encode(code, info)
+    assert cw.size == code.n
+    assert np.array_equal(cw[: code.k], info)  # systematic prefix
+    # H * cw^T == 0 over GF(2): every check parity is even
+    for c in range(code.m):
+        assert sum(int(cw[v]) for v in code.checks[c]) % 2 == 0

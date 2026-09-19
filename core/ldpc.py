@@ -7,7 +7,7 @@ interop is out of scope; see docs/design/0010-p3e-ldpc.md.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -15,6 +15,8 @@ import numpy.typing as npt
 Z = 27
 NB = 24
 MB: Dict[str, int] = {"1/2": 12, "2/3": 8, "3/4": 6}
+
+Bits = npt.NDArray[np.uint8]
 
 
 def _creates_4cycle(B: npt.NDArray[np.int64], c: int, r: int, s: int) -> bool:
@@ -92,3 +94,26 @@ def build_code(rate: str, seed: int) -> LdpcCode:
                 checks[c].append(v)
                 vars[v].append(c)
     return LdpcCode(B=B, checks=checks, vars=vars, m=m, n=n, k=n - m, mb=mb, kb=nb - mb)
+
+
+def encode(code: LdpcCode, info_bits: Bits) -> Bits:
+    info = np.asarray(info_bits, dtype=np.uint8)
+    if info.size != code.k:
+        raise ValueError("info length must equal code.k")
+    # info-only syndrome per check
+    synd = np.zeros(code.m, dtype=np.uint8)
+    for c in range(code.m):
+        acc = 0
+        for v in code.checks[c]:
+            if v < code.k:
+                acc ^= int(info[v])
+        synd[c] = acc
+    # accumulator solve over parity blocks: p_i = synd_i XOR p_{i-1}
+    parity = np.zeros(code.n - code.k, dtype=np.uint8)
+    prev = np.zeros(Z, dtype=np.uint8)
+    for i in range(code.mb):
+        sblk = synd[i * Z : (i + 1) * Z]
+        pblk = (sblk ^ prev) if i >= 1 else sblk
+        parity[i * Z : (i + 1) * Z] = pblk
+        prev = pblk
+    return cast(Bits, np.concatenate([info, parity]).astype(np.uint8))
