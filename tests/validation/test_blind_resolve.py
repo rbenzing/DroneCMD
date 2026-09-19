@@ -22,6 +22,7 @@ _SCMOD_TO_SCHEME = {
     "qpsk_link": ModScheme.QPSK,
     "rep_bpsk": ModScheme.BPSK,
     "conv_bpsk": ModScheme.BPSK,
+    "rs_bpsk": ModScheme.BPSK,
 }
 
 
@@ -146,6 +147,7 @@ def test_profile_id_accuracy_degrades_gracefully() -> None:
         "qpsk_link": ModScheme.QPSK,
         "rep_bpsk": ModScheme.BPSK,
         "conv_bpsk": ModScheme.BPSK,
+        "rs_bpsk": ModScheme.BPSK,
     }
     acc = {}
     for snr in (25.0, 15.0):
@@ -315,3 +317,15 @@ def test_resolve_ofdm_snr_sweep_accuracy() -> None:
             correct += int(got == name)
             total += 1
         assert correct == total, f"{correct}/{total} @ {snr} dB"
+
+
+def test_rs_bpsk_blind_resolves() -> None:
+    import numpy as np
+
+    from core.blind import resolve_sc_profile
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=64).astype(np.complex128)
+    spec, _ = resolve_sc_profile(iq)
+    assert spec is not None and spec.name == "rs_bpsk"
