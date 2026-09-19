@@ -4,7 +4,7 @@
 **Phase:** P3e
 
 **Date:** 2026-09-19
-**Status:** Design (awaiting review)
+**Status:** Accepted — implemented (unreleased; awaiting merge)
 **Author:** rbenzing (with Claude)
 **Program:** P3 (channel coding), sub-phase **P3e** — the first iterative soft codec (LDPC).
 **Predecessors:** P3a (coding framework), P3b (soft Viterbi; pipeline soft branch), P3c (Reed-Solomon; `core/galois.py`), P3d (BCH). ADRs 0005 (coding framework), 0006 (soft-LLR + loud-on-failure), 0008 (FEC family choices).

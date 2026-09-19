@@ -13,4 +13,4 @@ Numbered, committed design specs for the DroneCMD signal/coding stack. Each reco
 | 0007 | P3b | [P3b convolutional+Viterbi](0007-p3b-convolutional-viterbi.md) | Accepted (v0.3.0) |
 | 0008 | P3c | [P3c Reed-Solomon](0008-p3c-reed-solomon.md) | Accepted (v0.3.0) |
 | 0009 | P3d | [P3d BCH](0009-p3d-bch.md) | Accepted (v0.3.0) |
-| 0010 | P3e | [P3e 802.11n-style LDPC](0010-p3e-ldpc.md) | In progress |
+| 0010 | P3e | [P3e 802.11n-style LDPC](0010-p3e-ldpc.md) | Accepted (unreleased) |
