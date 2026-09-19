@@ -15,6 +15,8 @@ from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 import numpy as np
 import numpy.typing as npt
 
+from core import ldpc as _ldpc_mod
+from core import turbo as _turbo_mod
 from core.galois import GF256, GF2m, berlekamp_massey, chien_search
 
 Bits = npt.NDArray[np.uint8]
@@ -471,6 +473,131 @@ class _BCH:
             return DecodeResult(bits=bits[:k], meta={"decode_ok": False})
 
 
+class _LDPC:
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.rate = str(spec.params["rate"])  # type: ignore[index]
+        self.seed = int(spec.params.get("seed", 802))  # type: ignore[arg-type]
+        self.max_iters = int(spec.params.get("max_iters", 50))  # type: ignore[arg-type]
+        self.norm = float(spec.params.get("norm_factor", 0.8))  # type: ignore[arg-type]
+        self.code = _ldpc_mod.build_code(self.rate, self.seed)
+
+    def encode(self, info_bits: Bits) -> Bits:
+        info = np.asarray(info_bits, dtype=np.uint8)
+        k = self.code.k
+        if info.size > k:
+            raise ValueError("payload exceeds LDPC k")
+        padded = np.zeros(k, dtype=np.uint8)
+        padded[: info.size] = info
+        cw = _ldpc_mod.encode(self.code, padded)
+        # shorten: transmit real info + parity (drop the known-zero pad)
+        parity = cw[k:]
+        out = np.concatenate([info, parity]).astype(np.uint8)
+        self._info_len = int(info.size)  # for decode symmetry via meta not needed
+        return cast(Bits, out)
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        r = np.asarray(received)
+        llr_in = (
+            r.astype(np.float64)
+            if r.dtype.kind == "f"
+            else (1.0 - 2.0 * r.astype(np.float64)) * 8.0
+        )
+        k = self.code.k
+        parity_len = self.code.n - k
+        info_len = int(llr_in.size) - parity_len
+        if info_len <= 0:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8), meta={"decode_ok": False}
+            )
+        full = np.empty(self.code.n, dtype=np.float64)
+        full[:info_len] = llr_in[:info_len]
+        full[info_len:k] = 1e6  # known-zero shortened bits: very confident 0
+        full[k:] = llr_in[info_len:]
+        hard = _ldpc_mod.decode_min_sum(self.code, full, self.max_iters, self.norm)
+        bits = hard[:info_len].astype(np.uint8)
+        return DecodeResult(bits=cast(Bits, bits), meta={"decode_ok": True})
+
+
+class _Turbo:
+    """LTE-style rate-1/3 (or punctured rate-1/2) turbo codec (P3f).
+
+    Shortening mirrors ``_LDPC``: info is zero-padded to the fixed QPP block
+    size ``K``; only the real-info systematic bits are transmitted (the
+    known-zero pad is reinserted at decode time as a confident a-priori
+    LLR). Layout follows ``core.turbo.turbo_encode``:
+    ``[info(K) | tail1_sys(3) | tail2_sys(3) | par1(K+3) | par2(K+3)]``,
+    punctured to ``[... | par1[mask1] | par2[mask2]]`` for rate 1/2.
+    """
+
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.K = int(spec.params.get("block_k", 256))  # type: ignore[arg-type]
+        f1, f2 = cast(Tuple[int, int], spec.params.get("qpp", (31, 64)))
+        self.perm = _turbo_mod.qpp_perm(self.K, int(f1), int(f2))
+        self.max_iters = int(spec.params.get("max_iters", 8))  # type: ignore[arg-type]
+        self.scale = float(spec.params.get("extrinsic_scale", 0.7))  # type: ignore[arg-type]
+        self.punctured = bool(spec.params.get("puncture", False))
+        if self.punctured:
+            self.mask1, self.mask2 = _turbo_mod.punctured_parity_masks(self.K)
+            parity_len = int(self.mask1.sum()) + int(self.mask2.sum())
+        else:
+            parity_len = 2 * (self.K + 3)
+        self.trailer_len = 6 + parity_len  # tail1_sys(3) + tail2_sys(3) + parities
+
+    def encode(self, info_bits: Bits) -> Bits:
+        info = np.asarray(info_bits, dtype=np.uint8)
+        info_len = int(info.size)
+        if info_len > self.K:
+            raise ValueError("payload exceeds turbo block_k")
+        padded = np.zeros(self.K, dtype=np.uint8)
+        padded[:info_len] = info
+        coded = (
+            _turbo_mod.turbo_encode_punctured(padded, self.perm)
+            if self.punctured
+            else _turbo_mod.turbo_encode(padded, self.perm)
+        )
+        # shorten: drop the known-zero padded systematic positions
+        real_sys = coded[:info_len]
+        trailer = coded[self.K :]
+        out = np.concatenate([real_sys, trailer]).astype(np.uint8)
+        return cast(Bits, out)
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        r = np.asarray(received)
+        llr_in = (
+            r.astype(np.float64)
+            if r.dtype.kind == "f"
+            else (1.0 - 2.0 * r.astype(np.float64)) * 8.0
+        )
+        info_len = int(llr_in.size) - self.trailer_len
+        if info_len <= 0:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8), meta={"decode_ok": False}
+            )
+        ls_info = np.empty(self.K, dtype=np.float64)
+        ls_info[:info_len] = llr_in[:info_len]
+        ls_info[info_len:] = 1e6  # known-zero shortened bits: very confident 0
+        rest = llr_in[info_len:]
+        ls_tail1 = rest[:3]
+        ls_tail2 = rest[3:6]
+        parity = rest[6:]
+        if self.punctured:
+            n1 = int(self.mask1.sum())
+            lp1 = np.zeros(self.K + 3, dtype=np.float64)
+            lp1[self.mask1] = parity[:n1]
+            lp2 = np.zeros(self.K + 3, dtype=np.float64)
+            lp2[self.mask2] = parity[n1:]
+        else:
+            lp1 = parity[: self.K + 3]
+            lp2 = parity[self.K + 3 :]
+        hard = _turbo_mod.turbo_decode(
+            ls_info, ls_tail1, ls_tail2, lp1, lp2, self.perm, self.max_iters, self.scale
+        )
+        bits = hard[:info_len].astype(np.uint8)
+        return DecodeResult(bits=cast(Bits, bits), meta={"decode_ok": True})
+
+
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:
     """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
     coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
@@ -512,6 +639,10 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _ReedSolomon(spec)
     if spec.family == CodeFamily.BCH:
         return _BCH(spec)
+    if spec.family == CodeFamily.LDPC:
+        return _LDPC(spec)
+    if spec.family == CodeFamily.TURBO:
+        return _Turbo(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -596,18 +727,73 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         "bch_255_223", CodeFamily.BCH, 223, 255, {"gf_m": 8, "t": 4, "prim_poly": 0x11D}
     ),
     "ldpc_648_r12": CodingSpec(
-        "ldpc_648_r12", CodeFamily.LDPC, 324, 648, {"soft_input": True, "max_iters": 50}
+        "ldpc_648_r12",
+        CodeFamily.LDPC,
+        324,
+        648,
+        {
+            "soft_input": True,
+            "rate": "1/2",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
+    ),
+    "ldpc_648_r23": CodingSpec(
+        "ldpc_648_r23",
+        CodeFamily.LDPC,
+        432,
+        648,
+        {
+            "soft_input": True,
+            "rate": "2/3",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
+    ),
+    "ldpc_648_r34": CodingSpec(
+        "ldpc_648_r34",
+        CodeFamily.LDPC,
+        486,
+        648,
+        {
+            "soft_input": True,
+            "rate": "3/4",
+            "max_iters": 50,
+            "norm_factor": 0.8,
+            "seed": 802,
+        },
     ),
     "turbo_r13": CodingSpec(
         "turbo_r13",
         CodeFamily.TURBO,
-        1,
-        3,
+        256,
+        780,
         {
             "constraint_length": 4,
             "generators_octal": (0o13, 0o15),
             "soft_input": True,
             "max_iters": 8,
+            "extrinsic_scale": 0.7,
+            "block_k": 256,
+            "qpp": (31, 64),
+        },
+    ),
+    "turbo_r12": CodingSpec(
+        "turbo_r12",
+        CodeFamily.TURBO,
+        256,
+        524,
+        {
+            "constraint_length": 4,
+            "generators_octal": (0o13, 0o15),
+            "soft_input": True,
+            "max_iters": 8,
+            "extrinsic_scale": 0.7,
+            "block_k": 256,
+            "qpp": (31, 64),
+            "puncture": True,
         },
     ),
     "polar_256_128": CodingSpec(

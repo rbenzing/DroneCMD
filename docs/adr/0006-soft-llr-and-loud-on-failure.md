@@ -26,9 +26,11 @@ trust garbage. Both concerns are cross-cutting across every codec.
 - **Calibration caveat:** the LLR scale is ~2× conservative. Soft-decision
   Viterbi is **scale-invariant** (argmax over correlations), so this is harmless
   for convolutional decoding; the RS erasure rule is made **scale-invariant by
-  construction** (median-relative). Absolute-scale-sensitive decoders (LDPC,
-  turbo, polar) **must recalibrate** — recorded here as a standing cross-phase
-  obligation.
+  construction** (median-relative). Absolute-scale-sensitive decoders **must
+  recalibrate** — a standing cross-phase obligation. (Update: **LDPC does not** —
+  its normalized min-sum decoder is scale-invariant; see
+  [ADR-0013](0013-ldpc-normalized-min-sum.md). The obligation still holds for
+  turbo/polar if built with scale-sensitive decoders.)
 
 ## Consequences
 

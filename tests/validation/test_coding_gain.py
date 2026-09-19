@@ -174,6 +174,56 @@ def test_rs_beats_uncoded_low_snr() -> None:
     assert rs < unc  # coding gain: fewer residual errors RS-coded than uncoded
 
 
+def test_ldpc_beats_uncoded_low_snr() -> None:
+    """Soft-decoded LDPC(648,324) r=1/2 BER < uncoded BER at low SNR (matched PHY BPSK).
+
+    Mirrors ``test_rs_beats_uncoded_low_snr``'s harness shape through the SOFT
+    demod branch (``sc_soft_bits``, since ``CODING_CATALOG["ldpc_648_r12"]
+    .soft_input`` is True) into the normalized min-sum decoder. Payload is 38
+    bytes (304 payload bits + 16 CRC bits = 320 info bits, just under
+    ``k=324``) so the shortened codeword sits at (near) the code's nominal
+    rate-1/2 instead of losing several dB to heavy shortening overhead --
+    iterative LDPC decoding has a sharp waterfall, and below-threshold
+    operation can decode *worse* than uncoded (false convergence), so getting
+    close to the design rate matters for a clean gain demo. 7.2 dB / 15
+    trials (measured) is the smallest budget at which the fixed seeds land
+    LDPC at zero residual errors while uncoded still has some, keeping the
+    targeted run well under 30 s (~5 s measured; pure-Python min-sum is the
+    slow part but converges quickly this close to/above threshold).
+    """
+    from core.coding import CODING_CATALOG, CODING_INTERLEAVE_DEPTH
+    from core.single_carrier import SCProfile, sc_demodulate_psk, sc_soft_bits
+
+    payload = bytes(range(38))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 7.2, 15
+    unc = ldp = 0
+    prof = SCProfile(sps=16)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded
+        u = modulate(payload, ModScheme.BPSK, sps=16).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # ldpc_648_r12 (soft normalized min-sum decode)
+        c = modulate(
+            payload, ModScheme.BPSK, sps=16, coding=CODING_CATALOG["ldpc_648_r12"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cl = sc_soft_bits(cn.astype(np.complex128), prof, bits_per_symbol=1)
+        cframe = (
+            make_codec(CODING_CATALOG["ldpc_648_r12"])
+            .decode(deinterleave(cl, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        ldp += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert ldp < unc  # coding gain: fewer residual errors LDPC-coded than uncoded
+
+
 def test_bch_beats_uncoded_low_snr() -> None:
     """Hard-decoded BCH(255,223) t=4 BER < uncoded BER at low SNR (matched PHY BPSK).
 
@@ -215,3 +265,48 @@ def test_bch_beats_uncoded_low_snr() -> None:
         rp, _ = check_and_strip_crc(cframe)
         bch += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
     assert bch < unc  # coding gain: fewer residual errors BCH-coded than uncoded
+
+
+def test_turbo_beats_uncoded_awgn_llr() -> None:
+    """Turbo (rate-1/3) coding gain on a controlled AWGN-LLR channel.
+
+    Unlike the RS/BCH/LDPC gain tests (synth -> ``sc_soft_bits``), turbo's gain
+    is measured on a clean AWGN-LLR channel with a KNOWN noise variance -- the
+    standard way coding gain is characterized. This is necessary here because
+    the shared soft-demod (``sc_soft_bits``/sync) emits ~40-63% wrong-*sign*
+    LLRs on ~40% of frames at the low SNR where a strong code shows gain (a
+    phase/sync issue in ``core/single_carrier.py``, independent of turbo --
+    filed as a separate finding). No FEC corrects 60% sign errors, so an
+    end-to-end test at turbo's gain SNR would measure that demod bug, not the
+    code. The turbo decoder's correctness is established by
+    ``tests/validation/test_turbo.py`` (noiseless / error-correction /
+    scale-invariance) and the codec-level noisy round-trip in
+    ``test_coding.py``; this test isolates and confirms its coding gain.
+    """
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    codec = make_codec(CODING_CATALOG["turbo_r13"])
+    payload = bytes(range(30))  # 240 + 16 CRC = 256 = block_k (light shortening)
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    coded = (
+        make_codec(CODING_CATALOG["turbo_r13"])
+        .encode(frame_with_crc(pbits.astype(np.uint8)))
+        .astype(np.float64)
+    )
+    sigma, trials = 1.1, 6
+    unc = tur = 0
+    for s in range(trials):
+        g = rng(s)
+        # coded: BPSK bit b -> (1-2b); AWGN(sigma); LLR = 2y/sigma^2 (L>0 => bit0)
+        y = (1.0 - 2.0 * coded) + sigma * g.standard_normal(coded.size)
+        llr = 2.0 * y / (sigma * sigma)
+        rp, _ = check_and_strip_crc(codec.decode(llr).bits)
+        tur += (
+            int(np.sum(rp[: pbits.size] != pbits[: rp.size])) if rp.size else pbits.size
+        )
+        # uncoded: same AWGN channel on the raw payload bits
+        yu = (1.0 - 2.0 * pbits.astype(np.float64)) + sigma * g.standard_normal(
+            pbits.size
+        )
+        unc += int(np.sum((yu < 0).astype(np.uint8) != pbits))
+    assert tur < unc  # coding gain on a controlled AWGN-LLR channel
