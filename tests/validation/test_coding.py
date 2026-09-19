@@ -27,6 +27,7 @@ def test_make_codec_unimplemented_families_raise() -> None:
             CodeFamily.REPETITION,
             CodeFamily.CONVOLUTIONAL,
             CodeFamily.REED_SOLOMON,
+            CodeFamily.BCH,
         ):
             make_codec(spec)  # builds
         else:
@@ -370,3 +371,37 @@ def test_bch_generator_roots_are_consecutive_powers() -> None:
             assert GF256.poly_eval(g, GF256.pow(2, i)) == 0
         # binary coefficients
         assert all(c in (0, 1) for c in g)
+
+
+def test_bch_encode_systematic_parity_and_clean_syndromes() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, make_codec
+    from core.galois import GF256
+
+    codec = make_codec(CODING_CATALOG["bch_255_223"])  # t=4 -> deg g = 32
+    info = np.unpackbits(np.frombuffer(bytes(range(20)), dtype=np.uint8))  # 160 bits
+    coded = codec.encode(info.astype(np.uint8))
+    # systematic: info prefix preserved, 32 parity bits appended
+    assert coded.size == info.size + 32
+    assert np.array_equal(coded[: info.size], info)
+    # clean codeword evaluates to 0 at alpha^1..alpha^8
+    poly = [int(b) for b in coded]
+    for i in range(1, 9):
+        assert GF256.poly_eval(poly, GF256.pow(2, i)) == 0
+
+
+def test_bch_catalog_params() -> None:
+    from core.coding import CODING_CATALOG, CodeFamily
+
+    for name, gf_m, t in (
+        ("bch_63_51", 6, 2),
+        ("bch_255_239", 8, 2),
+        ("bch_255_223", 8, 4),
+    ):
+        spec = CODING_CATALOG[name]
+        assert spec.family == CodeFamily.BCH
+        assert spec.params["gf_m"] == gf_m and spec.params["t"] == t
+        assert spec.soft_input is False  # BCH is hard-input
+    assert CODING_CATALOG["bch_63_51"].params["prim_poly"] == 0x43
+    assert CODING_CATALOG["bch_255_223"].params["prim_poly"] == 0x11D

@@ -415,6 +415,27 @@ class _ReedSolomon:
         )
 
 
+class _BCH:
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.m = int(spec.params["gf_m"])  # type: ignore[call-overload]
+        self.t = int(spec.params["t"])  # type: ignore[call-overload]
+        prim = int(spec.params.get("prim_poly", 0x11D))  # type: ignore[arg-type]
+        self.field = GF256 if (self.m == 8 and prim == 0x11D) else GF2m(self.m, prim)
+        self.nsym = 2 * self.t
+        self.gen = _bch_generator_poly(self.field, self.t)
+        self.parity_len = len(self.gen) - 1
+
+    def encode(self, info_bits: Bits) -> Bits:
+        info = [int(b) for b in np.asarray(info_bits, dtype=np.uint8)]
+        _, parity = self.field.poly_div(info + [0] * self.parity_len, self.gen)
+        out = np.array(info + [int(c) for c in parity], dtype=np.uint8)
+        return cast(Bits, out)
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        raise NotImplementedError("BCH decode implemented in Task 3")
+
+
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:
     """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
     coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
@@ -454,6 +475,8 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _Convolutional(spec)
     if spec.family == CodeFamily.REED_SOLOMON:
         return _ReedSolomon(spec)
+    if spec.family == CodeFamily.BCH:
+        return _BCH(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -528,7 +551,15 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
             "erasure_factor": 0.5,
         },
     ),
-    "bch_63_51": CodingSpec("bch_63_51", CodeFamily.BCH, 51, 63, {"gf_m": 6, "t": 2}),
+    "bch_63_51": CodingSpec(
+        "bch_63_51", CodeFamily.BCH, 51, 63, {"gf_m": 6, "t": 2, "prim_poly": 0x43}
+    ),
+    "bch_255_239": CodingSpec(
+        "bch_255_239", CodeFamily.BCH, 239, 255, {"gf_m": 8, "t": 2, "prim_poly": 0x11D}
+    ),
+    "bch_255_223": CodingSpec(
+        "bch_255_223", CodeFamily.BCH, 223, 255, {"gf_m": 8, "t": 4, "prim_poly": 0x11D}
+    ),
     "ldpc_648_r12": CodingSpec(
         "ldpc_648_r12", CodeFamily.LDPC, 324, 648, {"soft_input": True, "max_iters": 50}
     ),
