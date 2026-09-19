@@ -265,3 +265,48 @@ def test_bch_beats_uncoded_low_snr() -> None:
         rp, _ = check_and_strip_crc(cframe)
         bch += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
     assert bch < unc  # coding gain: fewer residual errors BCH-coded than uncoded
+
+
+def test_turbo_beats_uncoded_awgn_llr() -> None:
+    """Turbo (rate-1/3) coding gain on a controlled AWGN-LLR channel.
+
+    Unlike the RS/BCH/LDPC gain tests (synth -> ``sc_soft_bits``), turbo's gain
+    is measured on a clean AWGN-LLR channel with a KNOWN noise variance -- the
+    standard way coding gain is characterized. This is necessary here because
+    the shared soft-demod (``sc_soft_bits``/sync) emits ~40-63% wrong-*sign*
+    LLRs on ~40% of frames at the low SNR where a strong code shows gain (a
+    phase/sync issue in ``core/single_carrier.py``, independent of turbo --
+    filed as a separate finding). No FEC corrects 60% sign errors, so an
+    end-to-end test at turbo's gain SNR would measure that demod bug, not the
+    code. The turbo decoder's correctness is established by
+    ``tests/validation/test_turbo.py`` (noiseless / error-correction /
+    scale-invariance) and the codec-level noisy round-trip in
+    ``test_coding.py``; this test isolates and confirms its coding gain.
+    """
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    codec = make_codec(CODING_CATALOG["turbo_r13"])
+    payload = bytes(range(30))  # 240 + 16 CRC = 256 = block_k (light shortening)
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    coded = (
+        make_codec(CODING_CATALOG["turbo_r13"])
+        .encode(frame_with_crc(pbits.astype(np.uint8)))
+        .astype(np.float64)
+    )
+    sigma, trials = 1.1, 6
+    unc = tur = 0
+    for s in range(trials):
+        g = rng(s)
+        # coded: BPSK bit b -> (1-2b); AWGN(sigma); LLR = 2y/sigma^2 (L>0 => bit0)
+        y = (1.0 - 2.0 * coded) + sigma * g.standard_normal(coded.size)
+        llr = 2.0 * y / (sigma * sigma)
+        rp, _ = check_and_strip_crc(codec.decode(llr).bits)
+        tur += (
+            int(np.sum(rp[: pbits.size] != pbits[: rp.size])) if rp.size else pbits.size
+        )
+        # uncoded: same AWGN channel on the raw payload bits
+        yu = (1.0 - 2.0 * pbits.astype(np.float64)) + sigma * g.standard_normal(
+            pbits.size
+        )
+        unc += int(np.sum((yu < 0).astype(np.uint8) != pbits))
+    assert tur < unc  # coding gain on a controlled AWGN-LLR channel
