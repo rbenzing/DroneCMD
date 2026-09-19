@@ -6,7 +6,7 @@ Field elements are plain ``int`` in ``[0, 2**m)``; addition is XOR.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 
 class GF2m:
@@ -102,28 +102,22 @@ def berlekamp_massey(
     field: GF2m,
     synd: List[int],
     nsym: int,
-    erase_loc: Optional[List[int]] = None,
     erase_count: int = 0,
 ) -> List[int]:
-    """Berlekamp-Massey errata-locator search (highest-degree-first output).
+    """Berlekamp-Massey error-locator search (highest-degree-first output).
 
-    ``synd`` is the (Forney-modified) syndrome list. When ``erase_loc`` is
-    given the search is seeded with it so the result is the combined errata
-    locator. Raises ``ValueError`` if the error count exceeds the budget.
+    ``synd`` is the (Forney-modified) syndrome list; when erasures are present
+    they are removed via the Forney syndromes and their known locator is
+    combined by the caller afterward (Convention A, matching the canonical
+    "Reed-Solomon for coders" reference), so this search finds only the
+    error locator over ``nsym - erase_count`` iterations. Raises ``ValueError``
+    if the error count exceeds the budget.
     """
-    if erase_loc is not None:
-        err_loc = list(erase_loc)
-        old_loc = list(erase_loc)
-    else:
-        err_loc = [1]
-        old_loc = [1]
+    err_loc = [1]
+    old_loc = [1]
     synd_shift = len(synd) - nsym if len(synd) > nsym else 0
     for i in range(nsym - erase_count):
-        k = (
-            (erase_count + i + synd_shift)
-            if erase_loc is not None
-            else (i + synd_shift)
-        )
+        k = i + synd_shift
         delta = synd[k]
         for j in range(1, len(err_loc)):
             delta ^= field.mul(err_loc[-(j + 1)], synd[k - j])

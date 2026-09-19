@@ -366,14 +366,11 @@ class _ReedSolomon:
             return r[:k], True  # clean
         try:
             fsynd = _rs_forney_syndromes(self.field, synd, erase_pos, n)
+            # Convention A: BM finds the ERROR locator over the Forney-reduced
+            # syndromes; the known erasure positions are combined below via
+            # erase_pos + err_pos in _rs_correct_errata (matches reedsolo).
             err_loc = berlekamp_massey(
-                self.field,
-                fsynd,
-                self.nsym,
-                erase_loc=_rs_errata_locator(self.field, [n - 1 - p for p in erase_pos])
-                if erase_pos
-                else None,
-                erase_count=len(erase_pos),
+                self.field, fsynd, self.nsym, erase_count=len(erase_pos)
             )
             err_pos = chien_search(self.field, err_loc[::-1], n)
             corrected = _rs_correct_errata(
@@ -387,7 +384,19 @@ class _ReedSolomon:
             return r[:k], False
 
     def _erasures_from_llrs(self, llrs: "npt.NDArray[np.float64]") -> List[int]:
-        return []  # Task 5: reliability-based erasure flagging
+        usable = (llrs.size // 8) * 8
+        if usable == 0:
+            return []
+        mag = np.abs(llrs[:usable]).reshape(-1, 8)
+        sym_rel = mag.min(axis=1)  # least-reliable bit per symbol
+        med = float(np.median(np.abs(llrs[:usable])))
+        thresh = self.erasure_factor * med
+        flagged = np.nonzero(sym_rel < thresh)[0]
+        if flagged.size <= self.nsym:
+            return [int(p) for p in flagged]
+        # cap at nsym: keep the least reliable
+        order = flagged[np.argsort(sym_rel[flagged])]
+        return sorted(int(p) for p in order[: self.nsym])
 
     def decode(self, received: SoftOrHard) -> DecodeResult:
         r_arr = np.asarray(received)

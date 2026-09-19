@@ -26,6 +26,7 @@ def test_make_codec_unimplemented_families_raise() -> None:
             CodeFamily.UNCODED,
             CodeFamily.REPETITION,
             CodeFamily.CONVOLUTIONAL,
+            CodeFamily.REED_SOLOMON,
         ):
             make_codec(spec)  # builds
         else:
@@ -275,3 +276,68 @@ def test_rs_fails_loudly_beyond_t() -> None:
     out = codec.decode(corrupted)
     _, ok = check_and_strip_crc(out.bits)
     assert ok is False  # loud failure, not a silent wrong payload
+
+
+def test_rs_errors_and_erasures_explicit_mask() -> None:
+    import numpy as np
+
+    from core.coding import (
+        _bits_to_symbols,
+        _symbols_to_bits,
+        check_and_strip_crc,
+        frame_with_crc,
+    )
+
+    codec = _rs_codec("rs_255_239")  # t=8, nsym=16 -> 2e+f<=16
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    syms = _bits_to_symbols(codec.encode(frame))
+    # 10 erasures + 3 errors: 2*3 + 10 = 16 == 2t -> correctable
+    erase_pos = list(range(10))
+    for p in erase_pos:
+        syms[p] ^= 0x33
+    for p in (15, 16, 17):
+        syms[p] ^= 0x9C
+    msg, ok = codec._decode_symbols(syms, erase_pos)
+    recovered, crc_ok = check_and_strip_crc(_symbols_to_bits(msg))
+    assert ok and crc_ok and np.array_equal(recovered, payload)
+    # beyond the bound: 10 erasures + 5 errors -> 2*5+10=20 > 16 -> fail
+    syms2 = _bits_to_symbols(codec.encode(frame))
+    for p in erase_pos:
+        syms2[p] ^= 0x33
+    for p in (15, 16, 17, 18, 19):
+        syms2[p] ^= 0x9C
+    _, ok2 = codec._decode_symbols(syms2, erase_pos)
+    assert ok2 is False
+
+
+def test_rs_reliability_flagged_erasures_soft_and_scale_invariant() -> None:
+    import numpy as np
+
+    from core.coding import (
+        CODING_CATALOG,
+        check_and_strip_crc,
+        frame_with_crc,
+        make_codec,
+    )
+
+    codec = make_codec(CODING_CATALOG["rs_255_239"])  # t=8
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    coded = codec.encode(frame)
+    # Build LLRs: correct sign, high magnitude, EXCEPT a burst of 12 symbols
+    # that are (a) sign-flipped (wrong hard bit) and (b) very low magnitude.
+    # 12 errors alone > t=8, but flagged as erasures 12 <= 2t=16 -> correctable.
+    llr = np.where(coded > 0, -6.0, 6.0)  # bit=1 -> negative LLR
+    burst = range(0, 12)
+    for s in burst:
+        for b in range(8):
+            idx = s * 8 + b
+            llr[idx] = -np.sign(llr[idx]) * 0.05  # flip sign, tiny magnitude
+    out = codec.decode(llr.astype(np.float64))
+    recovered, ok = check_and_strip_crc(out.bits)
+    assert ok and np.array_equal(recovered, payload)
+    assert out.meta["n_erasures"] >= 12
+    # scale invariance: multiply all LLRs by 10 -> identical decode
+    out2 = codec.decode((llr * 10.0).astype(np.float64))
+    assert np.array_equal(out2.bits, out.bits)
