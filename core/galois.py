@@ -6,7 +6,7 @@ Field elements are plain ``int`` in ``[0, 2**m)``; addition is XOR.
 """
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 class GF2m:
@@ -96,3 +96,59 @@ class GF2m:
 
 
 GF256 = GF2m(8, 0x11D)
+
+
+def berlekamp_massey(
+    field: GF2m,
+    synd: List[int],
+    nsym: int,
+    erase_loc: Optional[List[int]] = None,
+    erase_count: int = 0,
+) -> List[int]:
+    """Berlekamp-Massey errata-locator search (highest-degree-first output).
+
+    ``synd`` is the (Forney-modified) syndrome list. When ``erase_loc`` is
+    given the search is seeded with it so the result is the combined errata
+    locator. Raises ``ValueError`` if the error count exceeds the budget.
+    """
+    if erase_loc is not None:
+        err_loc = list(erase_loc)
+        old_loc = list(erase_loc)
+    else:
+        err_loc = [1]
+        old_loc = [1]
+    synd_shift = len(synd) - nsym if len(synd) > nsym else 0
+    for i in range(nsym - erase_count):
+        k = (
+            (erase_count + i + synd_shift)
+            if erase_loc is not None
+            else (i + synd_shift)
+        )
+        delta = synd[k]
+        for j in range(1, len(err_loc)):
+            delta ^= field.mul(err_loc[-(j + 1)], synd[k - j])
+        old_loc = old_loc + [0]
+        if delta != 0:
+            if len(old_loc) > len(err_loc):
+                new_loc = field.poly_scale(old_loc, delta)
+                old_loc = field.poly_scale(err_loc, field.inv(delta))
+                err_loc = new_loc
+            err_loc = field.poly_add(err_loc, field.poly_scale(old_loc, delta))
+    while len(err_loc) > 1 and err_loc[0] == 0:
+        err_loc = err_loc[1:]
+    errs = len(err_loc) - 1
+    if (errs - erase_count) * 2 + erase_count > nsym:
+        raise ValueError("too many errors")
+    return err_loc
+
+
+def chien_search(field: GF2m, err_loc: List[int], nmess: int) -> List[int]:
+    """Return error positions (``nmess-1-i`` for each root ``alpha^i``)."""
+    errs = len(err_loc) - 1
+    err_pos = []
+    for i in range(nmess):
+        if field.poly_eval(err_loc, field.pow(2, i)) == 0:
+            err_pos.append(nmess - 1 - i)
+    if len(err_pos) != errs:
+        raise ValueError("root count mismatch")
+    return err_pos

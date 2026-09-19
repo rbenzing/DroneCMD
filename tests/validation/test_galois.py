@@ -1,4 +1,6 @@
-from core.galois import GF256, GF2m
+import pytest
+
+from core.galois import GF256, GF2m, berlekamp_massey, chien_search
 
 
 def test_field_tables_and_inverse() -> None:
@@ -50,3 +52,36 @@ def test_gf64_smoke_p3d_ready() -> None:
     for a in range(1, 64):
         assert f.mul(a, f.inv(a)) == 1
     assert f.pow(2, 63) == 1
+
+
+def test_bm_and_chien_locate_known_errors() -> None:
+    # Build a codeword-length-20 zero message, inject 2 known symbol errors,
+    # recover their positions via syndromes -> BM -> Chien.
+    f = GF256
+    nsym = 6  # t=3
+    fcr = 1
+    n = 20
+    r = [0] * n
+    err_positions = {3, 11}
+    r[3] = 0x2A
+    r[11] = 0x71
+    # syndromes S_j = r(alpha^(j+fcr)), j=0..nsym-1 (no leading pad here)
+    synd = [f.poly_eval(r, f.pow(2, j + fcr)) for j in range(nsym)]
+    assert any(s != 0 for s in synd)
+    err_loc = berlekamp_massey(f, synd, nsym)
+    pos = set(chien_search(f, err_loc[::-1], n))
+    assert pos == err_positions
+
+
+def test_bm_raises_on_too_many_errors() -> None:
+    f = GF256
+    nsym = 2  # t=1, corrects 1 error; inject 2
+    fcr = 1
+    n = 12
+    r = [0] * n
+    r[2] = 0x10
+    r[7] = 0x40
+    synd = [f.poly_eval(r, f.pow(2, j + fcr)) for j in range(nsym)]
+    with pytest.raises(ValueError):
+        err_loc = berlekamp_massey(f, synd, nsym)
+        chien_search(f, err_loc[::-1], n)
