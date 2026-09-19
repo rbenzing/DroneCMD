@@ -133,7 +133,13 @@ def single_carrier_region_to_bytes(
         ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"", None)``
         if the region is empty or resolution/demod did not lock. If the
         resolved profile carries a channel code (``spec.coding``, e.g.
-        ``rep_bpsk``), the hard bits are deinterleaved
+        ``rep_bpsk``/``conv_bpsk``), the codec's decision type
+        (:attr:`core.coding.CodingSpec.soft_input`) picks the demod: soft
+        codecs (e.g. the convolutional Viterbi decoder) consume per-bit LLRs
+        from :func:`core.single_carrier.sc_soft_bits`; hard codecs (e.g.
+        repetition) consume hard bits from the usual
+        ``sc_demodulate_psk``/``sc_demodulate_fsk`` receivers. Either way the
+        (de)interleaved stream is deinterleaved
         (:func:`core.coding.deinterleave`), decoded through the matching
         codec (:func:`core.coding.make_codec`), and CRC-checked
         (:func:`core.coding.check_and_strip_crc`); the payload is returned
@@ -149,6 +155,47 @@ def single_carrier_region_to_bytes(
     spec, _conf = resolve_sc_profile(iq_c128)
     if spec is None:
         return b"", None
+    if spec.coding is not None:
+        from core.coding import (
+            CODING_CATALOG,
+            CODING_INTERLEAVE_DEPTH,
+            check_and_strip_crc,
+            deinterleave,
+            make_codec,
+        )
+
+        cspec = CODING_CATALOG[spec.coding]
+        if cspec.soft_input and not spec.is_fsk:
+            from core.single_carrier import sc_soft_bits
+
+            llrs = sc_soft_bits(
+                iq_c128, spec.profile, bits_per_symbol=spec.bits_per_symbol
+            )
+            if llrs.size == 0:
+                return b"", None
+            deint_soft = deinterleave(llrs, CODING_INTERLEAVE_DEPTH).astype(np.float64)
+            frame = make_codec(cspec).decode(deint_soft).bits
+        else:
+            if spec.is_fsk:
+                hbits = sc_demodulate_fsk(iq_c128, spec.profile, gfsk=spec.gfsk)
+            else:
+                hbits = sc_demodulate_psk(
+                    iq_c128,
+                    spec.profile,
+                    bits_per_symbol=spec.bits_per_symbol,
+                    differential=differential,
+                    pilot_spacing=pilot_spacing,
+                )
+            if len(hbits) == 0:
+                return b"", None
+            deint_hard = deinterleave(
+                hbits.astype(np.uint8), CODING_INTERLEAVE_DEPTH
+            ).astype(np.uint8)
+            frame = make_codec(cspec).decode(deint_hard).bits
+        payload, ok = check_and_strip_crc(frame)
+        if not ok:
+            return b"", None
+        return np.packbits(payload.astype(np.uint8)).tobytes(), spec.name
     if spec.is_fsk:
         bits = sc_demodulate_fsk(iq_c128, spec.profile, gfsk=spec.gfsk)
     else:
@@ -161,23 +208,6 @@ def single_carrier_region_to_bytes(
         )
     if len(bits) == 0:
         return b"", None
-    if spec.coding is not None:
-        from core.coding import (
-            CODING_CATALOG,
-            CODING_INTERLEAVE_DEPTH,
-            check_and_strip_crc,
-            deinterleave,
-            make_codec,
-        )
-
-        deint = deinterleave(bits.astype(np.uint8), CODING_INTERLEAVE_DEPTH).astype(
-            np.uint8
-        )
-        frame = make_codec(CODING_CATALOG[spec.coding]).decode(deint).bits
-        payload, ok = check_and_strip_crc(frame)
-        if not ok:
-            return b"", None
-        return np.packbits(payload.astype(np.uint8)).tobytes(), spec.name
     return np.packbits(bits.astype(np.uint8)).tobytes(), spec.name
 
 

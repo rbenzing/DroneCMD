@@ -346,6 +346,36 @@ def test_coded_region_decodes_and_crc_loud_fail() -> None:
     assert out2 == b"" and name2 is None
 
 
+def test_conv_coded_region_decodes_via_soft_path() -> None:
+    from core.coding import CODING_CATALOG
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes(range(16))
+    iq = modulate(payload, ModScheme.BPSK, sps=32, coding=CODING_CATALOG["conv_k7_r12"])
+    out, name = single_carrier_region_to_bytes(iq.astype(np.complex64), 1e6)
+    assert name == "conv_bpsk"
+    assert out[: len(payload)] == payload
+
+
+def test_conv_coded_region_crc_loud_fail() -> None:
+    from core.coding import CODING_CATALOG
+    from validation.pipeline import single_carrier_region_to_bytes
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(
+        bytes(range(16)), ModScheme.BPSK, sps=32, coding=CODING_CATALOG["conv_k7_r12"]
+    ).copy()
+    body = iq[26 * 32 :]
+    body[
+        : (3 * body.size) // 4
+    ] = 0.0  # wipe most of the payload -> beyond Viterbi -> CRC fail
+    out, name = single_carrier_region_to_bytes(iq.astype(np.complex64), 1e6)
+    assert out == b"" and name is None
+
+
 def test_pipeline_records_resolved_ofdm_profile() -> None:
     from validation import create_synth_dataset
     from validation.pipeline import DetectClassifyPipeline
