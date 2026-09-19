@@ -174,6 +174,61 @@ def _conv_encode(info_bits: Bits, generators: Tuple[int, int], k: int) -> Bits:
     return out
 
 
+def _viterbi_soft(
+    llrs: "npt.NDArray[np.float64]", generators: Tuple[int, int], k: int
+) -> Bits:
+    """Soft-decision Viterbi over the rate-1/2 mother code (zero-tail).
+
+    Maximizes total correlation ``sum (1-2c)*L``; erasures (L=0) contribute 0.
+    Returns the info bits (the last k-1 tail bits are dropped).
+    """
+    n_states = 1 << (k - 1)
+    n_stages = int(llrs.size) // 2
+    if n_stages <= (k - 1):
+        return np.zeros(0, dtype=np.uint8)
+    top = 1 << (k - 1)
+    mask = n_states - 1
+    g0, g1 = generators
+    nxt = np.zeros((n_states, 2), dtype=np.intp)
+    e0 = np.zeros((n_states, 2), dtype=np.int8)
+    e1 = np.zeros((n_states, 2), dtype=np.int8)
+    for s in range(n_states):
+        for u in (0, 1):
+            reg = (u * top) | s
+            e0[s, u] = _parity(reg & g0)
+            e1[s, u] = _parity(reg & g1)
+            nxt[s, u] = (reg >> 1) & mask
+    neg = -1e18
+    pm = np.full(n_states, neg, dtype=np.float64)
+    pm[0] = 0.0
+    prev = np.full((n_stages, n_states), -1, dtype=np.intp)
+    inbit = np.zeros((n_stages, n_states), dtype=np.int8)
+    for t in range(n_stages):
+        l0 = float(llrs[2 * t])
+        l1 = float(llrs[2 * t + 1])
+        npm = np.full(n_states, neg, dtype=np.float64)
+        for s in range(n_states):
+            if pm[s] == neg:
+                continue
+            for u in (0, 1):
+                ns = int(nxt[s, u])
+                bm = (1 - 2 * int(e0[s, u])) * l0 + (1 - 2 * int(e1[s, u])) * l1
+                cand = pm[s] + bm
+                if cand > npm[ns]:
+                    npm[ns] = cand
+                    prev[t, ns] = s
+                    inbit[t, ns] = u
+        pm = npm
+    s = 0  # zero-tail: terminal state is 0
+    bits = np.zeros(n_stages, dtype=np.uint8)
+    for t in range(n_stages - 1, -1, -1):
+        bits[t] = inbit[t, s]
+        s = int(prev[t, s])
+        if s < 0:
+            break
+    return bits[: n_stages - (k - 1)]
+
+
 class _Convolutional:
     def __init__(self, spec: CodingSpec) -> None:
         self.spec = spec
@@ -187,7 +242,15 @@ class _Convolutional:
         return cast(Bits, _puncture(coded, self.puncture))
 
     def decode(self, received: SoftOrHard) -> DecodeResult:
-        raise NotImplementedError("convolutional decode: P3b Task 3")
+        r = np.asarray(received)
+        llr = (
+            r.astype(np.float64)
+            if r.dtype.kind == "f"
+            else (1.0 - 2.0 * r.astype(np.float64))
+        )
+        full = cast("npt.NDArray[np.float64]", _depuncture(llr, self.puncture))
+        bits = _viterbi_soft(full, self.generators, self.k)
+        return DecodeResult(bits=bits)
 
 
 def make_codec(spec: CodingSpec) -> Codec:

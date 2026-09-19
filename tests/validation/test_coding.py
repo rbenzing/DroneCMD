@@ -138,3 +138,32 @@ def test_convolutional_punctured_encode_lengths() -> None:
         make_codec(CODING_CATALOG["conv_k7_r34"]).encode(info).size
         == _puncture(b12, (1, 1, 1, 0, 0, 1)).size
     )
+
+
+def test_conv_roundtrip_all_rates_noiseless() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, make_codec
+
+    info = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1], dtype=np.uint8)
+    for name in ("conv_k7_r12", "conv_k7_r23", "conv_k7_r34"):
+        codec = make_codec(CODING_CATALOG[name])
+        coded = codec.encode(info)
+        # clean channel: map bits -> LLR (+/-6), L>0 => bit 0
+        llr = np.where(coded == 0, 6.0, -6.0).astype(np.float64)
+        out = codec.decode(llr).bits
+        assert np.array_equal(out, info), f"{name} noiseless round-trip failed"
+
+
+def test_conv_soft_corrects_errors() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, make_codec
+
+    codec = make_codec(CODING_CATALOG["conv_k7_r12"])
+    info = np.array([1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1], dtype=np.uint8)
+    llr = np.where(codec.encode(info) == 0, 4.0, -4.0).astype(np.float64)
+    llr[2] = -llr[2]
+    llr[9] = -llr[9]
+    llr[10] = -llr[10]  # a few flipped soft bits
+    assert np.array_equal(codec.decode(llr).bits, info)  # Viterbi corrects them
