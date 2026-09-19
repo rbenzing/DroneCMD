@@ -12,9 +12,17 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import numpy.typing as npt
 
 from validation.repro import rng
-from validation.types import ClassificationMetrics, DetectionMetrics
+from validation.types import (
+    ClassificationMetrics,
+    CodedLinkMetrics,
+    DetectionMetrics,
+    ProfileIdMetrics,
+)
+
+Bits = npt.NDArray[np.uint8]
 
 
 def overlap_iou(a: Tuple[int, int], b: Tuple[int, int]) -> float:
@@ -162,6 +170,90 @@ def classification_metrics(
         confusion=confusion,
         per_class=per_class,
         accuracy_by_snr=acc_by_snr,
+    )
+
+
+def profile_id_metrics(
+    pairs: List[Tuple[str, str]],
+    snr_by_pair: Optional[List[float]] = None,
+) -> ProfileIdMetrics:
+    """Blind profile-ID accuracy from ``(truth_profile, resolved_profile)`` pairs.
+
+    Args:
+        pairs: ``(truth_profile, resolved_profile)`` pairs; a no-lock resolve
+            should be passed as the string ``"none"`` by the caller.
+        snr_by_pair: Optional per-pair SNR (dB) for bucketed accuracy.
+
+    Returns:
+        A populated :class:`~validation.types.ProfileIdMetrics`.
+    """
+    labels = sorted({p for pair in pairs for p in pair})
+    confusion: Dict[str, Dict[str, int]] = {t: {p: 0 for p in labels} for t in labels}
+    correct = 0
+    for truth, pred in pairs:
+        confusion[truth][pred] += 1
+        if truth == pred:
+            correct += 1
+    accuracy = correct / len(pairs) if pairs else 0.0
+    acc_by_snr: Dict[float, float] = {}
+    if snr_by_pair is not None:
+        buckets: Dict[float, List[int]] = {}
+        for (truth, pred), snr in zip(pairs, snr_by_pair):
+            buckets.setdefault(round(snr, 1), []).append(int(truth == pred))
+        acc_by_snr = {k: float(np.mean(v)) for k, v in sorted(buckets.items())}
+    return ProfileIdMetrics(
+        accuracy=accuracy, confusion=confusion, accuracy_by_snr=acc_by_snr
+    )
+
+
+def coded_link_metrics(
+    pairs: List[Tuple[Bits, Optional[Bits]]],
+    snr_by_pair: Optional[List[float]] = None,
+) -> CodedLinkMetrics:
+    """Coded payload BER + frame-error rate (FER).
+
+    Each pair is (truth_payload_bits, decoded_payload_bits or None). A None or
+    too-short decode counts all truth bits as errors and the frame as a failure
+    (conservative, standard convention). Empty input -> zeros.
+
+    Args:
+        pairs: ``(truth_payload_bits, decoded_payload_bits)`` pairs, where the
+            decoded array is ``None`` on a loud decode failure (e.g. CRC
+            mismatch or no lock).
+        snr_by_pair: Optional per-pair SNR (dB) for bucketed BER/FER.
+
+    Returns:
+        A populated :class:`~validation.types.CodedLinkMetrics`.
+    """
+    if not pairs:
+        return CodedLinkMetrics(coded_ber=0.0, fer=0.0)
+    snrs = snr_by_pair if snr_by_pair is not None else [0.0] * len(pairs)
+    tot_bits = tot_errs = tot_fail = 0
+    bits_by: Dict[float, int] = {}
+    errs_by: Dict[float, int] = {}
+    fail_by: Dict[float, int] = {}
+    n_by: Dict[float, int] = {}
+    for (truth, dec), snr in zip(pairs, snrs):
+        n = int(truth.size)
+        if dec is None or int(dec.size) < n:
+            errs = n
+        else:
+            errs = int(np.sum(truth != dec[:n]))
+        fail = 1 if errs > 0 else 0
+        tot_bits += n
+        tot_errs += errs
+        tot_fail += fail
+        key = round(float(snr), 0)
+        bits_by[key] = bits_by.get(key, 0) + n
+        errs_by[key] = errs_by.get(key, 0) + errs
+        fail_by[key] = fail_by.get(key, 0) + fail
+        n_by[key] = n_by.get(key, 0) + 1
+    ber = tot_errs / tot_bits if tot_bits else 0.0
+    fer = tot_fail / len(pairs)
+    ber_by_snr = {k: errs_by[k] / bits_by[k] for k in bits_by if bits_by[k]}
+    fer_by_snr = {k: fail_by[k] / n_by[k] for k in n_by}
+    return CodedLinkMetrics(
+        coded_ber=ber, fer=fer, ber_by_snr=ber_by_snr, fer_by_snr=fer_by_snr
     )
 
 

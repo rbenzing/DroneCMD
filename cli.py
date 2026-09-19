@@ -421,6 +421,20 @@ For more information, see the documentation.
     v_synth.add_argument('--n', type=int, default=20, help='Captures per (protocol, SNR) cell')
     v_synth.add_argument('--seed', type=int, default=42)
     v_synth.add_argument('--out', required=True, help='Output dataset directory')
+    v_synth.add_argument(
+        '--differential', action='store_true',
+        help='Use differential encoding (DBPSK/DQPSK) for PSK schemes',
+    )
+    v_synth.add_argument(
+        '--pilot-spacing', type=int, default=0,
+        help='Insert a known pilot every N coherent-PSK payload symbols for '
+             'pilot-aided phase tracking (0 = pilotless, the default)',
+    )
+    v_synth.add_argument(
+        '--profile', default=None,
+        help='Force one catalog profile for all protocols (overrides the '
+             'per-protocol default), e.g. ble_2m',
+    )
 
     v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
     v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
@@ -437,9 +451,9 @@ For more information, see the documentation.
         '--use-truth-bytes', action='store_true',
         help=(
             'Score the classifier on ground-truth payload bytes instead of '
-            'demodulated bytes. Without this flag, CLI classification of '
-            'synthetic non-FSK schemes (e.g. QPSK) is demod-limited, since '
-            'region_to_bytes is a fixed FSK demodulator.'
+            'demodulated bytes. FSK/GFSK and OFDM captures demodulate for real; '
+            'QPSK remains demod-limited (its pipeline demod still uses the FSK '
+            'reference), so use this flag to isolate classifier accuracy there.'
         ),
     )
 
@@ -960,11 +974,43 @@ def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput
         raise CLIError(f"Training failed: {e}")
 
 
+def _default_synth_scheme(protocol):
+    """Map a protocol name to its default synthetic modulation scheme.
+
+    Known protocols keep their explicit scheme; anything else falls back to
+    GFSK -- the most common controllable-drone C2/telemetry modulation (RC
+    links, SiK/MAVLink, BLE) and the framework's default single-carrier
+    scheme, chosen over raw FSK as the real-world norm.
+    """
+    from validation import ModScheme
+
+    known = {
+        "mavlink": ModScheme.FSK,
+        "dji": ModScheme.QPSK,
+        "ocusync": ModScheme.OFDM,
+        "bpsk_link": ModScheme.BPSK,
+    }
+    return known.get(protocol, ModScheme.GFSK)
+
+
+def _default_synth_profile(protocol):
+    """Map a protocol name to its default catalog profile name (GFSK default
+    ``sik_gfsk`` for unknown protocols)."""
+    known = {
+        "mavlink": "sik_gfsk",
+        "ble": "ble_1m",
+        "dji": "qpsk_link",
+        "ocusync": "wifi_20",
+        "bpsk_link": "psk_c2",
+    }
+    return known.get(protocol, "sik_gfsk")
+
+
 def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
     """Handle validate command — synth/ingest datasets or run the T&E harness."""
     import numpy as np
     from validation import (
-        create_synth_dataset, create_pipeline, evaluate, LabeledDataset, ModScheme,
+        create_synth_dataset, create_pipeline, evaluate, LabeledDataset,
     )
     from validation.report import write_report
 
@@ -974,11 +1020,16 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
             lo, hi, step = (float(x) for x in args.snr.split(':'))
             grid = list(np.arange(lo, hi + step / 2, step))
             protocols = [p.strip() for p in args.protocols.split(',')]
-            default_scheme = {"mavlink": ModScheme.FSK, "dji": ModScheme.QPSK}
-            scheme_by_protocol = {p: default_scheme.get(p, ModScheme.FSK) for p in protocols}
+            if args.profile:
+                profile_by_protocol = {p: args.profile for p in protocols}
+            else:
+                profile_by_protocol = {p: _default_synth_profile(p) for p in protocols}
             ds = create_synth_dataset(
                 protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
-                scheme_by_protocol=scheme_by_protocol, seed=args.seed,
+                seed=args.seed,
+                differential=args.differential,
+                pilot_spacing=args.pilot_spacing,
+                profile_by_protocol=profile_by_protocol,
             )
             ds.write(Path(args.out))
             output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")

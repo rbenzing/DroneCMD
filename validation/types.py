@@ -13,6 +13,7 @@ IQSamples = npt.NDArray[np.complex64]
 class ModScheme(Enum):
     FSK = "fsk"
     GFSK = "gfsk"
+    BPSK = "bpsk"
     QPSK = "qpsk"
     OFDM = "ofdm"
 
@@ -42,6 +43,8 @@ class Detection:
     end: int
     protocol: str
     confidence: float
+    resolved_profile: Optional[str] = None
+    payload: Optional[bytes] = None
 
 
 @dataclass
@@ -69,6 +72,23 @@ class ClassificationMetrics:
 
 
 @dataclass
+class ProfileIdMetrics:
+    accuracy: float
+    confusion: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    accuracy_by_snr: Dict[float, float] = field(default_factory=dict)
+    ci: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+
+
+@dataclass
+class CodedLinkMetrics:
+    coded_ber: float
+    fer: float
+    ber_by_snr: Dict[float, float] = field(default_factory=dict)
+    fer_by_snr: Dict[float, float] = field(default_factory=dict)
+    ci: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+
+
+@dataclass
 class RunManifest:
     seed: int
     dataset_hash: str
@@ -84,3 +104,5 @@ class RunResult:
     detection: DetectionMetrics
     classification: ClassificationMetrics
     manifest: RunManifest
+    profile_id: Optional[ProfileIdMetrics] = None
+    coded_link: Optional[CodedLinkMetrics] = None

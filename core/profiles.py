@@ -1,0 +1,185 @@
+"""Named PHY profile registry for DroneCMD (single source of truth).
+
+A profile bundles a modulation with its single-carrier PHY parameters
+(:class:`core.single_carrier.SCProfile`) under a stable name, so datasets,
+the blind resolver, and the CLI all refer to the same catalog. Split by
+:class:`Family`; the OFDM catalog holds a curated set of profiles with
+distinct FFT sizes and a same-N CP variant. This module depends only on
+:mod:`core.single_carrier` and :mod:`core.ofdm` -- no heavy imports.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+from core.ofdm import DEFAULT_OFDM_PROFILE, OFDMProfile
+from core.single_carrier import SCProfile
+
+
+class SCMod(Enum):
+    """Single-carrier modulation of a profile (mirrors the SC members of
+    :class:`validation.types.ModScheme`; kept local so ``core`` does not
+    depend on ``validation``)."""
+
+    FSK = "fsk"
+    GFSK = "gfsk"
+    BPSK = "bpsk"
+    QPSK = "qpsk"
+
+
+class Family(Enum):
+    """Waveform family a profile belongs to."""
+
+    SINGLE_CARRIER = "single_carrier"
+    OFDM = "ofdm"
+
+
+@dataclass(frozen=True)
+class SCProfileSpec:
+    """A named single-carrier profile: a modulation plus its PHY params.
+
+    Attributes:
+        name: Stable catalog key (e.g. ``"ble_2m"``).
+        mod: The single-carrier modulation.
+        profile: The PHY parameters (sps/mod_index/bt).
+        coding: Optional :data:`core.coding.CODING_CATALOG` key naming the
+            channel code carried by this profile. ``None`` (the default)
+            means uncoded -- every pre-existing catalog entry is unchanged.
+    """
+
+    name: str
+    mod: SCMod
+    profile: SCProfile
+    coding: Optional[str] = None
+
+    @property
+    def bits_per_symbol(self) -> int:
+        """2 for QPSK, else 1 (BPSK/FSK/GFSK)."""
+        return 2 if self.mod == SCMod.QPSK else 1
+
+    @property
+    def is_fsk(self) -> bool:
+        """True for FSK/GFSK (frequency modulations)."""
+        return self.mod in (SCMod.FSK, SCMod.GFSK)
+
+    @property
+    def gfsk(self) -> bool:
+        """True only for GFSK (Gaussian-shaped)."""
+        return self.mod == SCMod.GFSK
+
+
+# Curated, PHY-distinct single-carrier catalog (see the design spec). Each
+# entry is distinguishable by blind resolution -- by preamble waveform (sps
+# and FSK/GFSK/PSK shape) for all but the BPSK<->QPSK pair, which the
+# payload-order discriminator (`core.blind`) separates. `sik_gfsk` equals the
+# framework's current GFSK default (`DEFAULT_SC_PROFILE`).
+SC_CATALOG: Dict[str, SCProfileSpec] = {
+    "sik_gfsk": SCProfileSpec(
+        "sik_gfsk", SCMod.GFSK, SCProfile(sps=8, mod_index=0.7, bt=0.5)
+    ),
+    "ble_1m": SCProfileSpec(
+        "ble_1m", SCMod.GFSK, SCProfile(sps=8, mod_index=0.5, bt=0.5)
+    ),
+    "ble_2m": SCProfileSpec(
+        "ble_2m", SCMod.GFSK, SCProfile(sps=4, mod_index=0.5, bt=0.5)
+    ),
+    "fsk_basic": SCProfileSpec(
+        "fsk_basic", SCMod.FSK, SCProfile(sps=8, mod_index=0.7, bt=0.5)
+    ),
+    "psk_c2": SCProfileSpec("psk_c2", SCMod.BPSK, SCProfile(sps=8)),
+    "qpsk_link": SCProfileSpec("qpsk_link", SCMod.QPSK, SCProfile(sps=8)),
+    # PHY-distinct coded profile (P3a): sps=16 is unique among SC_CATALOG
+    # entries so the blind resolver separates it by acquisition alone, same
+    # as the other distinct-sps profiles above -- this avoids the same-PHY
+    # collision that would otherwise defeat blind resolution.
+    "rep_bpsk": SCProfileSpec("rep_bpsk", SCMod.BPSK, SCProfile(sps=16), coding="rep3"),
+    # PHY-distinct coded profile (P3b): sps=32 is unique among SC_CATALOG
+    # entries (including rep_bpsk's sps=16), so blind resolution separates it
+    # by acquisition alone -- same rationale as rep_bpsk above.
+    "conv_bpsk": SCProfileSpec(
+        "conv_bpsk", SCMod.BPSK, SCProfile(sps=32), coding="conv_k7_r12"
+    ),
+    # PHY-distinct coded profile (P3c): sps=64 is unique among SC_CATALOG
+    # entries (including rep_bpsk's sps=16 and conv_bpsk's sps=32), so blind
+    # resolution separates it by acquisition alone -- same rationale as
+    # rep_bpsk/conv_bpsk above.
+    "rs_bpsk": SCProfileSpec(
+        "rs_bpsk", SCMod.BPSK, SCProfile(sps=64), coding="rs_255_239"
+    ),
+    # PHY-distinct coded profile (P3d): sps=128 is unique among SC_CATALOG
+    # entries (including rep_bpsk's sps=16, conv_bpsk's sps=32, and
+    # rs_bpsk's sps=64), so blind resolution separates it by acquisition
+    # alone -- same rationale as rep_bpsk/conv_bpsk/rs_bpsk above.
+    "bch_bpsk": SCProfileSpec(
+        "bch_bpsk", SCMod.BPSK, SCProfile(sps=128), coding="bch_255_223"
+    ),
+}
+
+
+def _ofdm_profile(
+    n_fft: int, cp: int, occ_max: int, pilots: Tuple[int, ...]
+) -> OFDMProfile:
+    """Build an OFDMProfile with occupied = [-occ_max, occ_max]\\{0}, the given
+    pilots (values all 1+0j), and data = occupied minus pilots."""
+    occupied = [k for k in range(-occ_max, occ_max + 1) if k != 0]
+    data = tuple(k for k in occupied if k not in pilots)
+    pilot_values = tuple(1 + 0j for _ in pilots)
+    return OFDMProfile(
+        fft_size=n_fft,
+        cp_len=cp,
+        data_carriers=data,
+        pilot_carriers=tuple(pilots),
+        pilot_values=pilot_values,
+    )
+
+
+# Broader OFDM catalog (see the design spec). wifi_20 == DEFAULT_OFDM_PROFILE.
+# Distinct FFT sizes (wifi_20/wifi_40/ofdm_nb) are separated blindly by the
+# Schmidl & Cox sync gate; the same-N variant (wifi_20_longcp = long CP) is
+# separated by the trial-demod EVM tiebreak in
+# `core.blind.resolve_ofdm_profile`. A same-N alternate-pilot-layout variant
+# was evaluated and dropped (P2-OFDM plan T3 risk-gate measurement): it
+# shares all 52 occupied bins with wifi_20, so a wrong-layout trial demod
+# produces only a systematic, payload-dependent common-phase-error bias
+# rather than a noise-scaled error, and that bias is not reliably separable
+# from genuine wifi_20 EVM at the normal-SNR band (fails the required 0.2 EVM
+# margin at 20/30 dB, and at 10 dB in most seeds).
+OFDM_CATALOG: Dict[str, OFDMProfile] = {
+    "wifi_20": DEFAULT_OFDM_PROFILE,
+    "wifi_40": _ofdm_profile(128, 32, 58, (-53, -25, -11, 11, 25, 53)),
+    "ofdm_nb": _ofdm_profile(32, 8, 13, (-11, -3, 3, 11)),
+    "wifi_20_longcp": _ofdm_profile(64, 32, 26, (-21, -7, 7, 21)),
+}
+
+# The framework default single-carrier profile name (the GFSK default).
+DEFAULT_SC_PROFILE_NAME = "sik_gfsk"
+
+
+def family_of(name: str) -> Family:
+    """Return the :class:`Family` of a catalog profile name.
+
+    Raises:
+        KeyError: If ``name`` is in neither catalog.
+    """
+    if name in SC_CATALOG:
+        return Family.SINGLE_CARRIER
+    if name in OFDM_CATALOG:
+        return Family.OFDM
+    raise KeyError(f"unknown profile: {name}")
+
+
+def all_profile_names() -> List[str]:
+    """All known profile names (single-carrier then OFDM)."""
+    return list(SC_CATALOG) + list(OFDM_CATALOG)
+
+
+def coding_of(name: str) -> Optional[str]:
+    """Return the :mod:`core.coding` catalog key carried by profile ``name``.
+
+    ``None`` for an uncoded single-carrier profile, an unknown name, or any
+    OFDM profile (OFDM profiles carry no coding in P3a).
+    """
+    if name in SC_CATALOG:
+        return SC_CATALOG[name].coding
+    return None

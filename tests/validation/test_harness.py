@@ -64,3 +64,74 @@ def test_high_snr_detects_and_classifies() -> None:
     assert r.manifest.dataset_hash
     assert "pd" in r.detection.ci
     assert "accuracy" in r.classification.ci
+
+
+def test_run_evaluation_reports_profile_id() -> None:
+    spec = DatasetSpec(
+        protocols=["a", "b"],
+        snr_grid_db=[30.0],
+        n_per_cell=2,
+        sample_rate=2_048_000.0,
+        seed=3,
+        profile_by_protocol={"a": "ble_1m", "b": "qpsk_link"},
+    )
+    ds = LabeledDataset(build_scenario(spec))
+
+    class _StubClf:
+        def classify(
+            self, packet_bytes: bytes, signal_metrics: Optional[dict] = None
+        ) -> str:
+            return "x"
+
+    pipe = DetectClassifyPipeline(_StubClf())
+    result = run_evaluation(ds, pipe, HarnessConfig())
+    assert result.profile_id is not None
+    assert result.profile_id.accuracy >= 0.9  # blind resolution at 30 dB
+
+
+def test_profile_id_spans_sc_and_ofdm() -> None:
+    """Blind profile-ID accuracy is high on a mixed single-carrier + OFDM
+    dataset, and OFDM profile names flow into the confusion matrix."""
+    spec = DatasetSpec(
+        protocols=["g", "w", "n"],
+        snr_grid_db=[30.0],
+        n_per_cell=3,
+        sample_rate=2_048_000.0,
+        seed=8,
+        profile_by_protocol={"g": "sik_gfsk", "w": "wifi_20", "n": "ofdm_nb"},
+    )
+    ds = LabeledDataset(build_scenario(spec))
+
+    class _Clf:
+        def classify(
+            self, packet_bytes: bytes, signal_metrics: Optional[dict] = None
+        ) -> str:
+            return "x"
+
+    pipe = DetectClassifyPipeline(_Clf())
+    result = run_evaluation(ds, pipe, HarnessConfig())
+    assert result.profile_id is not None
+    assert result.profile_id.accuracy >= 0.8  # blind resolution at 30 dB
+    assert {"sik_gfsk", "wifi_20", "ofdm_nb"} <= set(result.profile_id.confusion.keys())
+
+
+def test_run_evaluation_reports_coded_link() -> None:
+    spec = DatasetSpec(
+        protocols=["c"],
+        snr_grid_db=[30.0],
+        n_per_cell=3,
+        sample_rate=2_048_000.0,
+        seed=7,
+        profile_by_protocol={"c": "rep_bpsk"},
+    )
+    ds = LabeledDataset(build_scenario(spec))
+
+    class _Clf:
+        def classify(
+            self, packet_bytes: bytes, signal_metrics: Optional[dict] = None
+        ) -> str:
+            return "c"
+
+    result = run_evaluation(ds, DetectClassifyPipeline(_Clf()), HarnessConfig())
+    assert result.coded_link is not None
+    assert result.coded_link.coded_ber < 0.05  # rep_bpsk decodes cleanly at 30 dB

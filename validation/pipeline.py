@@ -12,6 +12,21 @@ either a bare protocol name (``str``, treated as confidence 1.0) or a
 ``ClassificationResult``-like object exposing ``.predicted_protocol`` and
 ``.confidence`` (accessed via ``getattr`` so this module never imports
 ``core.classification.ClassificationResult`` directly).
+
+Detection is scheme-aware, driven by a capture's ``provenance["scheme"]``
+(case-insensitive): ``"ofdm"`` selects :func:`default_ofdm_detector` (a
+moving-average power envelope tuned to OFDM's high PAPR) instead of the
+injected ``detector``. Decode is blind: each detected region is classified
+independently by :func:`core.blind.classify_family` into OFDM or
+single-carrier (provenance is not consulted), and routed to
+:func:`ofdm_region_to_bytes` (blindly resolves the OFDM profile via
+:func:`core.blind.resolve_ofdm_profile` and demodulates with the matching
+:func:`core.ofdm.demodulate_ofdm` receiver) or
+:func:`single_carrier_region_to_bytes` (blindly resolves the single-carrier
+profile via :func:`core.blind.resolve_sc_profile` and demodulates with the
+matching :mod:`core.single_carrier` receiver) respectively. The old
+self-contained inline FSK slicer (formerly ``region_to_bytes``) has been
+retired in favor of the core engine.
 """
 from __future__ import annotations
 
@@ -46,37 +61,188 @@ def default_detector(
     return detect_packets(iq, threshold=threshold, min_gap=min_gap)
 
 
-def region_to_bytes(iq_region: IQSamples, sps: int = 8) -> bytes:
-    """Demodulate an IQ region to bytes via a simple FSK bit decision.
+def default_ofdm_detector(
+    iq: IQSamples, threshold: float, min_gap: int
+) -> List[Tuple[int, int]]:
+    """Detect OFDM bursts via a smoothed (moving-average) power envelope.
 
-    This is a self-contained, minimal FSK demodulator: it estimates
-    instantaneous frequency from the unwrapped phase and makes a per-symbol
-    bit decision from the sign of the mean frequency over the inner half of
-    each symbol period. It is not intended to be a high-fidelity
-    demodulator; its round-trip behavior is exercised by Task 4's
-    modulator/demodulator tests.
+    OFDM is intrinsically high-PAPR, so the per-sample amplitude threshold in
+    :func:`core.signal_processing.detect_packets` fragments a burst into many
+    short sub-threshold pieces. Averaging instantaneous power over one OFDM
+    symbol fills those nulls, so the burst thresholds as a single region.
 
     Args:
-        iq_region: Complex baseband samples spanning one detected packet.
-        sps: Samples per symbol used for bit-boundary alignment.
+        iq: Complex baseband samples.
+        threshold: Detection threshold; values < 1.0 are a fraction of the
+            peak smoothed power.
+        min_gap: Minimum region length in samples (shorter regions dropped).
 
     Returns:
-        Packed bytes (``numpy.packbits``) of the recovered bit stream. Empty
-        bytes if the region is shorter than one symbol.
+        ``(start, end)`` regions of OFDM activity.
     """
-    if len(iq_region) < sps:
-        return b""
-    phase = np.unwrap(np.angle(iq_region))
-    inst_freq = np.diff(phase, prepend=phase[0])
-    n_sym = len(iq_region) // sps
-    bits = np.zeros(n_sym, dtype=np.uint8)
-    for k in range(n_sym):
-        seg = inst_freq[k * sps + sps // 4 : k * sps + 3 * sps // 4]
-        bits[k] = 1 if float(np.mean(seg)) > 0 else 0
-    pad = (-len(bits)) % 8
-    if pad:
-        bits = np.concatenate([bits, np.zeros(pad, dtype=np.uint8)])
-    return np.packbits(bits).tobytes()
+    from core.ofdm import DEFAULT_OFDM_PROFILE
+
+    if len(iq) == 0:
+        return []
+    power = np.abs(iq).astype(np.float64) ** 2
+    window = DEFAULT_OFDM_PROFILE.symbol_len
+    if window > 1 and len(power) >= window:
+        kernel = np.ones(window, dtype=np.float64) / window
+        power = np.convolve(power, kernel, mode="same")
+    thr = threshold * float(np.max(power)) if threshold < 1.0 else threshold
+    active = power > thr
+    edges = np.diff(active.astype(int))
+    starts = np.where(edges == 1)[0] + 1
+    ends = np.where(edges == -1)[0] + 1
+    if len(ends) > 0 and (len(starts) == 0 or starts[0] > ends[0]):
+        starts = np.insert(starts, 0, 0)
+    if len(starts) > 0 and (len(ends) == 0 or ends[-1] < starts[-1]):
+        ends = np.append(ends, len(active))
+    return [(int(s), int(e)) for s, e in zip(starts, ends) if e - s > min_gap]
+
+
+def single_carrier_region_to_bytes(
+    iq_region: IQSamples,
+    sample_rate: float,
+    *,
+    differential: bool = False,
+    pilot_spacing: int = 0,
+) -> Tuple[bytes, Optional[str]]:
+    """Blindly resolve and demodulate a single-carrier region to bytes.
+
+    Runs :func:`core.blind.resolve_sc_profile` to infer the profile (sps +
+    modulation, BPSK/QPSK disambiguated) from lock confidence -- no scheme/sps
+    hint is taken from the caller. On a lock, demodulates with the resolved
+    profile via the shared PH receivers (``sc_demodulate_psk``/
+    ``sc_demodulate_fsk``). Only the *profile* is blind; ``differential`` and
+    ``pilot_spacing`` are caller-provided payload knobs (not blindly
+    detectable; the P2-SC catalog is coherent + pilotless so both default off).
+
+    Args:
+        iq_region: Complex baseband samples spanning one detected packet,
+            including its Barker preamble near the start.
+        sample_rate: Capture sample rate in Hz. Reserved (the blind path
+            decodes against the resolved profile directly); kept for signature
+            stability and future per-sample-rate profile scaling.
+        differential: Passed to the coherent-PSK receiver when the resolved
+            profile is PSK; ignored for FSK/GFSK.
+        pilot_spacing: Passed to the coherent-PSK receiver; > 0 selects
+            pilot-aided tracking (the capture must have used the same spacing).
+
+    Returns:
+        ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"", None)``
+        if the region is empty or resolution/demod did not lock. If the
+        resolved profile carries a channel code (``spec.coding``, e.g.
+        ``rep_bpsk``/``conv_bpsk``), the codec's decision type
+        (:attr:`core.coding.CodingSpec.soft_input`) picks the demod: soft
+        codecs (e.g. the convolutional Viterbi decoder) consume per-bit LLRs
+        from :func:`core.single_carrier.sc_soft_bits`; hard codecs (e.g.
+        repetition) consume hard bits from the usual
+        ``sc_demodulate_psk``/``sc_demodulate_fsk`` receivers. Either way the
+        (de)interleaved stream is deinterleaved
+        (:func:`core.coding.deinterleave`), decoded through the matching
+        codec (:func:`core.coding.make_codec`), and CRC-checked
+        (:func:`core.coding.check_and_strip_crc`); the payload is returned
+        only when the CRC passes, otherwise ``(b"", None)`` (loud failure --
+        never silently wrong bits).
+    """
+    if len(iq_region) == 0:
+        return b"", None
+    from core.blind import resolve_sc_profile
+    from core.single_carrier import sc_demodulate_fsk, sc_demodulate_psk
+
+    iq_c128 = iq_region.astype(np.complex128)
+    spec, _conf = resolve_sc_profile(iq_c128)
+    if spec is None:
+        return b"", None
+    if spec.coding is not None:
+        from core.coding import (
+            CODING_CATALOG,
+            CODING_INTERLEAVE_DEPTH,
+            check_and_strip_crc,
+            deinterleave,
+            make_codec,
+        )
+
+        cspec = CODING_CATALOG[spec.coding]
+        if cspec.soft_input and not spec.is_fsk:
+            from core.single_carrier import sc_soft_bits
+
+            llrs = sc_soft_bits(
+                iq_c128, spec.profile, bits_per_symbol=spec.bits_per_symbol
+            )
+            if llrs.size == 0:
+                return b"", None
+            deint_soft = deinterleave(llrs, CODING_INTERLEAVE_DEPTH).astype(np.float64)
+            frame = make_codec(cspec).decode(deint_soft).bits
+        else:
+            if spec.is_fsk:
+                hbits = sc_demodulate_fsk(iq_c128, spec.profile, gfsk=spec.gfsk)
+            else:
+                hbits = sc_demodulate_psk(
+                    iq_c128,
+                    spec.profile,
+                    bits_per_symbol=spec.bits_per_symbol,
+                    differential=differential,
+                    pilot_spacing=pilot_spacing,
+                )
+            if len(hbits) == 0:
+                return b"", None
+            deint_hard = deinterleave(
+                hbits.astype(np.uint8), CODING_INTERLEAVE_DEPTH
+            ).astype(np.uint8)
+            frame = make_codec(cspec).decode(deint_hard).bits
+        payload, ok = check_and_strip_crc(frame)
+        if not ok:
+            return b"", None
+        return np.packbits(payload.astype(np.uint8)).tobytes(), spec.name
+    if spec.is_fsk:
+        bits = sc_demodulate_fsk(iq_c128, spec.profile, gfsk=spec.gfsk)
+    else:
+        bits = sc_demodulate_psk(
+            iq_c128,
+            spec.profile,
+            bits_per_symbol=spec.bits_per_symbol,
+            differential=differential,
+            pilot_spacing=pilot_spacing,
+        )
+    if len(bits) == 0:
+        return b"", None
+    return np.packbits(bits.astype(np.uint8)).tobytes(), spec.name
+
+
+def ofdm_region_to_bytes(iq_region: IQSamples) -> Tuple[bytes, Optional[str]]:
+    """Blindly resolve the OFDM profile of a region, then demodulate with it.
+
+    Mirrors :func:`single_carrier_region_to_bytes`: resolution and decode use
+    the ``core`` PHY directly (not the fixed-profile production
+    :class:`core.demodulation.OFDMDemodulator`). Returns ``(packed_bytes,
+    resolved_name)`` on a lock, or ``(b"", None)`` on an empty region or when
+    the blind resolver reports no trustworthy OFDM lock.
+
+    Args:
+        iq_region: Complex baseband samples spanning one detected OFDM
+            packet, including its STF+LTF preamble near the start.
+
+    Returns:
+        ``(packed_bytes, resolved_profile_name)`` on a lock, or ``(b"",
+        None)`` if the region is empty, the blind resolver did not lock, or
+        the demod yielded no bits.
+    """
+    if len(iq_region) == 0:
+        return b"", None
+    from core.blind import resolve_ofdm_profile
+    from core.ofdm import demodulate_ofdm
+    from core.profiles import OFDM_CATALOG
+
+    iq_c128 = iq_region.astype(np.complex128)
+    name, _ = resolve_ofdm_profile(iq_c128)
+    if name is None:
+        return b"", None
+    bits = demodulate_ofdm(iq_c128, OFDM_CATALOG[name])
+    if len(bits) == 0:
+        return b"", None
+    return np.packbits(bits.astype(np.uint8)).tobytes(), name
 
 
 def _protocol_and_confidence(result: Union[str, object]) -> Tuple[str, float]:
@@ -100,17 +266,26 @@ class DetectClassifyPipeline:
             ``ClassificationResult``-like object with
             ``.predicted_protocol``/``.confidence``.
         detector: Callable ``(iq, threshold, min_gap) -> [(start, end), ...]``
-            used to find candidate packet regions. Defaults to
+            used to find candidate packet regions for non-OFDM captures
+            (``provenance["scheme"]`` unset or not ``"ofdm"``). Defaults to
             :func:`default_detector`.
-        threshold: Detection threshold passed through to ``detector``.
-        min_gap: Minimum gap (samples) between packets, passed through to
-            ``detector``.
-        sps: Samples per symbol used by :func:`region_to_bytes` when
-            demodulating a region to bytes.
+        threshold: Detection threshold passed through to whichever detector
+            is selected.
+        min_gap: Minimum detected-region length in samples, passed through
+            to whichever detector is selected; regions shorter than this are
+            dropped (this filters out short spurious regions -- it does not
+            bridge gaps between packets).
+        sps: Unused by decode -- single-carrier profile resolution is now
+            blind (:func:`single_carrier_region_to_bytes` infers sps itself
+            via :func:`core.blind.resolve_sc_profile`). Retained for
+            constructor compatibility.
         use_truth_bytes: When ``True``, recover packet bytes from the
             overlapping truth region's ``provenance["payload_hex"]`` instead
             of demodulating the IQ region. Useful for isolating classifier
             accuracy from demodulator quality.
+        ofdm_detector: Detector used instead of ``detector`` when a
+            capture's ``provenance["scheme"]`` is ``"ofdm"``. Defaults to
+            :func:`default_ofdm_detector`.
     """
 
     def __init__(
@@ -121,6 +296,7 @@ class DetectClassifyPipeline:
         min_gap: int = 256,
         sps: int = 8,
         use_truth_bytes: bool = False,
+        ofdm_detector: DetectorFn = default_ofdm_detector,
     ) -> None:
         self.classifier = classifier
         self.detector = detector
@@ -128,6 +304,7 @@ class DetectClassifyPipeline:
         self.min_gap = min_gap
         self.sps = sps
         self.use_truth_bytes = use_truth_bytes
+        self.ofdm_detector = ofdm_detector
 
     def _truth_bytes(
         self, capture: LabeledCapture, start: int, end: int
@@ -140,27 +317,50 @@ class DetectClassifyPipeline:
         return None
 
     def run(self, capture: LabeledCapture) -> List[Detection]:
-        """Detect and classify all packet regions in ``capture``.
+        """Detect packet regions, then blindly resolve + classify each.
 
-        Args:
-            capture: Labeled capture to run detection + classification over.
-
-        Returns:
-            One :class:`~validation.types.Detection` per detected region, in
-            detection order.
+        Detector selection still keys on ``provenance["scheme"]`` (OFDM
+        envelope vs energy detector -- detection is scored separately against
+        truth). Decode routing is blind: each region is classified by
+        :func:`core.blind.classify_family` into OFDM or single-carrier and the
+        resolved profile is recorded on the :class:`Detection`. ``differential``
+        /``pilot_spacing`` are read from provenance as caller payload knobs.
         """
-        regions = self.detector(capture.iq, self.threshold, self.min_gap)
+        from core.blind import classify_family
+        from core.profiles import Family
+
+        scheme_hint = str(capture.provenance.get("scheme", "")).lower()
+        detector = self.ofdm_detector if scheme_hint == "ofdm" else self.detector
+        regions = detector(capture.iq, self.threshold, self.min_gap)
+        differential = bool(capture.provenance.get("differential", False))
+        pilot_spacing = int(capture.provenance.get("pilot_spacing", 0))
         detections: List[Detection] = []
         for start, end in regions:
+            region = capture.iq[start:end]
+            resolved: Optional[str] = None
             if self.use_truth_bytes:
                 pkt = self._truth_bytes(capture, start, end) or b""
             else:
-                pkt = region_to_bytes(capture.iq[start:end], sps=self.sps)
+                family, _ = classify_family(region.astype(np.complex128))
+                if family == Family.OFDM:
+                    pkt, resolved = ofdm_region_to_bytes(region)
+                else:
+                    pkt, resolved = single_carrier_region_to_bytes(
+                        region,
+                        capture.sample_rate,
+                        differential=differential,
+                        pilot_spacing=pilot_spacing,
+                    )
             result = self.classifier.classify(pkt, None)
             proto, conf = _protocol_and_confidence(result)
             detections.append(
                 Detection(
-                    start=int(start), end=int(end), protocol=proto, confidence=conf
+                    start=int(start),
+                    end=int(end),
+                    protocol=proto,
+                    confidence=conf,
+                    resolved_profile=resolved,
+                    payload=pkt,
                 )
             )
         return detections

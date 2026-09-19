@@ -20,9 +20,11 @@ from validation.dataset import LabeledDataset
 from validation.metrics import (
     bootstrap_ci,
     classification_metrics,
+    coded_link_metrics,
     detection_metrics,
     match_detections,
     overlap_iou,
+    profile_id_metrics,
 )
 from validation.pipeline import DetectClassifyPipeline
 from validation.repro import capture_manifest, hash_config
@@ -122,6 +124,10 @@ def run_evaluation(
     matched: List[Tuple[int, int, int]] = []
     pairs: List[Tuple[str, str]] = []
     snr_by_pair: List[float] = []
+    profile_pairs: List[Tuple[str, str]] = []
+    profile_snr: List[float] = []
+    coded_pairs: List[Tuple[np.ndarray, Optional[np.ndarray]]] = []
+    coded_snr: List[float] = []
     total_samples = 0
     pd_by_snr: Dict[float, List[int]] = {}
 
@@ -139,11 +145,32 @@ def run_evaluation(
         snr = float(capture.provenance.get("snr_db", 0.0))
         pd_by_snr.setdefault(round(snr, 0), []).append(1 if tp > 0 else 0)
 
+        truth_profile = str(capture.provenance.get("profile", ""))
+        payload_hex = str(capture.provenance.get("payload_hex", ""))
+        truth_bits: Optional[np.ndarray] = (
+            np.unpackbits(np.frombuffer(bytes.fromhex(payload_hex), dtype=np.uint8))
+            if payload_hex
+            else None
+        )
         for detection in detections:
             pair = _match_pair(detection, capture.truth_regions, config.iou_threshold)
             if pair is not None:
                 pairs.append(pair)
                 snr_by_pair.append(snr)
+                if truth_profile:
+                    profile_pairs.append(
+                        (truth_profile, detection.resolved_profile or "none")
+                    )
+                    profile_snr.append(snr)
+                if truth_bits is not None:
+                    dec = detection.payload
+                    dec_bits: Optional[np.ndarray] = (
+                        np.unpackbits(np.frombuffer(dec, dtype=np.uint8))
+                        if dec
+                        else None
+                    )
+                    coded_pairs.append((truth_bits, dec_bits))
+                    coded_snr.append(snr)
 
     # Minimum-detectable SNR: lowest bucket whose per-bucket Pd clears the
     # target.
@@ -162,6 +189,8 @@ def run_evaluation(
         min_snr=min_snr,
     )
     cls_metrics = classification_metrics(pairs, snr_by_pair=snr_by_pair)
+    prof_metrics = profile_id_metrics(profile_pairs, snr_by_pair=profile_snr)
+    coded_metrics = coded_link_metrics(coded_pairs, snr_by_pair=coded_snr)
 
     # Bootstrap confidence intervals on the headline numbers -- every
     # reported metric carries a CI, not just a point estimate.
@@ -171,6 +200,21 @@ def run_evaluation(
     cls_metrics.ci["accuracy"] = bootstrap_ci(
         [1.0 if truth == pred else 0.0 for (truth, pred) in pairs], seed=config.seed
     )
+    prof_metrics.ci["accuracy"] = bootstrap_ci(
+        [1.0 if t == p else 0.0 for (t, p) in profile_pairs], seed=config.seed
+    )
+    if coded_pairs:
+        coded_metrics.ci["fer"] = bootstrap_ci(
+            [
+                (
+                    1.0
+                    if (d is None or d.size < t.size or bool(np.any(t != d[: t.size])))
+                    else 0.0
+                )
+                for (t, d) in coded_pairs
+            ],
+            seed=config.seed,
+        )
 
     config_hash = hash_config(asdict(config))
     manifest = capture_manifest(
@@ -180,5 +224,9 @@ def run_evaluation(
         model_hash=model_hash,
     )
     return RunResult(
-        detection=det_metrics, classification=cls_metrics, manifest=manifest
+        detection=det_metrics,
+        classification=cls_metrics,
+        manifest=manifest,
+        profile_id=prof_metrics,
+        coded_link=coded_metrics,
     )

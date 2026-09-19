@@ -50,3 +50,38 @@ def test_bootstrap_ci_brackets_mean() -> None:
     vals = list(np.r_[np.ones(50), np.zeros(50)])  # mean 0.5
     lo, hi = bootstrap_ci(vals, n=500, seed=1)
     assert lo < 0.5 < hi
+
+
+def test_profile_id_metrics_basic() -> None:
+    from validation.metrics import profile_id_metrics
+
+    pairs = [("ble_1m", "ble_1m"), ("ble_1m", "sik_gfsk"), ("qpsk_link", "qpsk_link")]
+    m = profile_id_metrics(pairs, snr_by_pair=[30.0, 5.0, 30.0])
+    assert abs(m.accuracy - 2 / 3) < 1e-9
+    assert m.confusion["ble_1m"]["sik_gfsk"] == 1
+    assert m.accuracy_by_snr[30.0] == 1.0
+    assert m.accuracy_by_snr[5.0] == 0.0
+
+
+def test_profile_id_metrics_empty() -> None:
+    from validation.metrics import profile_id_metrics
+
+    m = profile_id_metrics([])
+    assert m.accuracy == 0.0
+
+
+def test_coded_link_metrics_basic() -> None:
+    from validation.metrics import coded_link_metrics
+
+    t = np.array([1, 0, 1, 1], dtype=np.uint8)
+    m = coded_link_metrics([(t, t.copy()), (t, None)], snr_by_pair=[30.0, 5.0])
+    assert m.fer == 0.5  # one perfect, one failed
+    assert 0.0 < m.coded_ber < 1.0  # 4 of 8 bits wrong
+    assert m.ber_by_snr[30.0] == 0.0 and m.fer_by_snr[5.0] == 1.0
+
+
+def test_coded_link_metrics_empty() -> None:
+    from validation.metrics import coded_link_metrics
+
+    m = coded_link_metrics([])
+    assert m.coded_ber == 0.0 and m.fer == 0.0
