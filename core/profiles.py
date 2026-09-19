@@ -107,6 +107,13 @@ SC_CATALOG: Dict[str, SCProfileSpec] = {
     "rs_bpsk": SCProfileSpec(
         "rs_bpsk", SCMod.BPSK, SCProfile(sps=64), coding="rs_255_239"
     ),
+    # PHY-distinct coded profile (P3d): sps=128 is unique among SC_CATALOG
+    # entries (including rep_bpsk's sps=16, conv_bpsk's sps=32, and
+    # rs_bpsk's sps=64), so blind resolution separates it by acquisition
+    # alone -- same rationale as rep_bpsk/conv_bpsk/rs_bpsk above.
+    "bch_bpsk": SCProfileSpec(
+        "bch_bpsk", SCMod.BPSK, SCProfile(sps=128), coding="bch_255_223"
+    ),
 }
 
 
