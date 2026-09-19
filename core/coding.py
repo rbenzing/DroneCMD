@@ -415,6 +415,36 @@ class _ReedSolomon:
         )
 
 
+def _bch_min_poly(field: GF2m, i: int) -> List[int]:
+    """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
+    coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
+    coset = set()
+    j = i % field.n
+    while j not in coset:
+        coset.add(j)
+        j = (j * 2) % field.n
+    poly = [1]
+    for j in coset:
+        poly = field.poly_mul(poly, [1, field.pow(2, j)])
+    return poly
+
+
+def _bch_generator_poly(field: GF2m, t: int) -> List[int]:
+    """BCH generator g(x) = lcm of minimal polys of alpha^1 .. alpha^(2t).
+
+    Conjugate roots share a minimal poly, so distinct minimal polys are
+    multiplied once each. Binary coefficients, highest-first."""
+    seen: List[Tuple[int, ...]] = []
+    g = [1]
+    for i in range(1, 2 * t + 1):
+        mp = _bch_min_poly(field, i)
+        key = tuple(mp)
+        if key not in seen:
+            seen.append(key)
+            g = field.poly_mul(g, mp)
+    return g
+
+
 def make_codec(spec: CodingSpec) -> Codec:
     if spec.family == CodeFamily.UNCODED:
         return _Uncoded(spec)

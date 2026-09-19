@@ -341,3 +341,32 @@ def test_rs_reliability_flagged_erasures_soft_and_scale_invariant() -> None:
     # scale invariance: multiply all LLRs by 10 -> identical decode
     out2 = codec.decode((llr * 10.0).astype(np.float64))
     assert np.array_equal(out2.bits, out.bits)
+
+
+def test_bch_min_poly_and_generator_degrees() -> None:
+    from core.coding import _bch_generator_poly, _bch_min_poly
+    from core.galois import GF256, GF2m
+
+    # minimal polynomial of alpha^1 over GF(2^8): degree 8, binary coeffs
+    m1 = _bch_min_poly(GF256, 1)
+    assert len(m1) - 1 == 8
+    assert all(c in (0, 1) for c in m1)
+
+    # generator degrees: GF(2^8) t=2 -> 16, t=4 -> 32; GF(2^6) t=2 -> 12
+    assert len(_bch_generator_poly(GF256, 2)) - 1 == 16
+    assert len(_bch_generator_poly(GF256, 4)) - 1 == 32
+    f6 = GF2m(6, 0x43)
+    assert len(_bch_generator_poly(f6, 2)) - 1 == 12
+
+
+def test_bch_generator_roots_are_consecutive_powers() -> None:
+    from core.coding import _bch_generator_poly
+    from core.galois import GF256
+
+    for t in (2, 4):
+        g = _bch_generator_poly(GF256, t)
+        # g(alpha^i) == 0 for i = 1 .. 2t (the designed consecutive roots)
+        for i in range(1, 2 * t + 1):
+            assert GF256.poly_eval(g, GF256.pow(2, i)) == 0
+        # binary coefficients
+        assert all(c in (0, 1) for c in g)
