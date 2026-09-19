@@ -29,6 +29,7 @@ def test_make_codec_unimplemented_families_raise() -> None:
             CodeFamily.REED_SOLOMON,
             CodeFamily.BCH,
             CodeFamily.LDPC,
+            CodeFamily.TURBO,
         ):
             make_codec(spec)  # builds
         else:
@@ -508,3 +509,43 @@ def test_make_codec_unimplemented_families_raise_ldpc() -> None:
     from core.coding import CODING_CATALOG, make_codec
 
     make_codec(CODING_CATALOG["ldpc_648_r12"])  # must not raise
+
+
+def _turbo(name):
+    from core.coding import CODING_CATALOG, make_codec
+
+    return make_codec(CODING_CATALOG[name])
+
+
+def test_turbo_catalog_params() -> None:
+    from core.coding import CODING_CATALOG, CodeFamily
+
+    for name in ("turbo_r13", "turbo_r12"):
+        spec = CODING_CATALOG[name]
+        assert spec.family == CodeFamily.TURBO
+        assert spec.soft_input is True
+        assert spec.params["block_k"] == 256
+    assert "puncture" not in CODING_CATALOG["turbo_r13"].params
+    assert CODING_CATALOG["turbo_r12"].params["puncture"] is True
+
+
+def test_turbo_shortened_roundtrip() -> None:
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    for name in ("turbo_r13", "turbo_r12"):
+        codec = _turbo(name)
+        payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+        frame = frame_with_crc(payload.astype(np.uint8))
+        coded = codec.encode(frame)
+        llr = np.where(coded == 0, 8.0, -8.0).astype(np.float64)  # clean channel
+        out = codec.decode(llr)
+        recovered, ok = check_and_strip_crc(out.bits)
+        assert ok and np.array_equal(recovered, payload)
+
+
+def test_make_codec_unimplemented_families_raise_turbo() -> None:
+    # TURBO now builds; ensure the enumerating test's builds-set includes it.
+    from core.coding import CODING_CATALOG, make_codec
+
+    make_codec(CODING_CATALOG["turbo_r13"])  # must not raise
+    make_codec(CODING_CATALOG["turbo_r12"])  # must not raise
