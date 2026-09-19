@@ -78,3 +78,56 @@ def deinterleave_qpp(
     out = np.empty_like(a)
     out[perm] = a
     return out
+
+
+def turbo_encode(info: Bits, perm: npt.NDArray[np.intp]) -> Bits:
+    """Turbo encoder (rate 1/3 systematic).
+
+    Layout: [info(K) | tail1_sys(3) | tail2_sys(3) | par1(K+3) | par2(K+3)]
+    Total length: 3*K + 12
+    """
+    info = np.asarray(info, dtype=np.uint8)
+    K = info.size
+    sys1, par1 = rsc_encode(info)  # len K+3
+    sys2, par2 = rsc_encode(info[perm])  # len K+3
+    tail1_sys = sys1[K:]  # 3
+    tail2_sys = sys2[K:]  # 3
+    out = np.concatenate([info, tail1_sys, tail2_sys, par1, par2])
+    return out.astype(np.uint8)  # 3K + 12
+
+
+PUNCTURE_R12: Tuple[int, ...] = (
+    1,
+    0,
+    0,
+    1,
+)  # keep p1 even / p2 odd (applied to the two parity streams)
+
+
+def punctured_parity_masks(K: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Return boolean masks for de-puncturing in rate-1/2 decoder.
+
+    mask1: drop odd-index par1 over info region (K bits)
+    mask2: drop even-index par2 over info region (K bits)
+    Both masks keep tails in full.
+    """
+    mask1 = np.ones(K + 3, dtype=bool)
+    mask1[:K][1::2] = False  # drop odd-index par1 over info
+
+    mask2 = np.ones(K + 3, dtype=bool)
+    mask2[:K][0::2] = False  # drop even-index par2 over info
+
+    return mask1, mask2
+
+
+def turbo_encode_punctured(info: Bits, perm: npt.NDArray[np.intp]) -> Bits:
+    """Rate 1/2: keep all systematic + tails, keep alternating parity bits."""
+    info = np.asarray(info, dtype=np.uint8)
+    K = info.size
+    sys1, par1 = rsc_encode(info)
+    sys2, par2 = rsc_encode(info[perm])
+    head = np.concatenate([info, sys1[K:], sys2[K:]])  # systematic + tails
+    # keep par1 on even info positions, par2 on odd (tails kept in full)
+    mask1, mask2 = punctured_parity_masks(K)
+    out = np.concatenate([head, par1[mask1], par2[mask2]])
+    return out.astype(np.uint8)
