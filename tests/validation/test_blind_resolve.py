@@ -25,6 +25,7 @@ _SCMOD_TO_SCHEME = {
     "rs_bpsk": ModScheme.BPSK,
     "bch_bpsk": ModScheme.BPSK,
     "ldpc_bpsk": ModScheme.BPSK,
+    "turbo_bpsk": ModScheme.BPSK,
 }
 
 
@@ -152,6 +153,7 @@ def test_profile_id_accuracy_degrades_gracefully() -> None:
         "rs_bpsk": ModScheme.BPSK,
         "bch_bpsk": ModScheme.BPSK,
         "ldpc_bpsk": ModScheme.BPSK,
+        "turbo_bpsk": ModScheme.BPSK,
     }
     acc = {}
     for snr in (25.0, 15.0):
@@ -357,3 +359,15 @@ def test_ldpc_bpsk_blind_resolves() -> None:
     iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=256).astype(np.complex128)
     spec, _ = resolve_sc_profile(iq)
     assert spec is not None and spec.name == "ldpc_bpsk"
+
+
+def test_turbo_bpsk_blind_resolves() -> None:
+    import numpy as np
+
+    from core.blind import resolve_sc_profile
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    iq = modulate(bytes(range(24)), ModScheme.BPSK, sps=512).astype(np.complex128)
+    spec, _ = resolve_sc_profile(iq)
+    assert spec is not None and spec.name == "turbo_bpsk"
