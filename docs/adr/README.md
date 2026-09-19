@@ -31,3 +31,4 @@ them.
 | [0011](0011-design-records-and-drift-control.md) | Design records and documentation drift control | Accepted |
 | [0012](0012-subagent-driven-development-workflow.md) | Subagent-driven development workflow | Accepted |
 | [0013](0013-ldpc-normalized-min-sum.md) | LDPC decoder — normalized min-sum (scale-invariant) | Accepted |
+| [0014](0014-turbo-max-log-map.md) | Turbo decoder — max-log-MAP + extrinsic scaling (scale-invariant) | Accepted |

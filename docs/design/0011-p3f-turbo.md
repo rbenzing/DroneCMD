@@ -4,7 +4,7 @@
 **Phase:** P3f
 
 **Date:** 2026-09-19
-**Status:** Design (awaiting review)
+**Status:** Accepted — implemented (unreleased; awaiting merge). Coding gain shown on a controlled AWGN-LLR channel — see ADR-0014 and the soft-demod finding.
 **Author:** rbenzing (with Claude)
 **Program:** P3 (channel coding), sub-phase **P3f** — the second iterative soft codec (turbo).
 **Predecessors:** P3a (framework), P3b (soft Viterbi + puncture helpers), P3c (galois), P3d (BCH), P3e (LDPC; ADR-0013 scale-invariant soft decode). ADRs 0005, 0006, 0008, 0013.
