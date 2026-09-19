@@ -23,6 +23,7 @@ def test_catalog_has_expected_entries() -> None:
         "conv_bpsk",
         "rs_bpsk",
         "bch_bpsk",
+        "ldpc_bpsk",
     }
     assert "wifi_20" in OFDM_CATALOG
 
@@ -180,3 +181,13 @@ def test_bch_bpsk_profile() -> None:
     assert SC_CATALOG["bch_bpsk"].profile.sps == 128
     # sps=128 must be unique in SC_CATALOG (blind resolution key)
     assert [p.profile.sps for p in SC_CATALOG.values() if p.profile.sps == 128] == [128]
+
+
+def test_ldpc_bpsk_profile() -> None:
+    from core.coding import CODING_CATALOG
+    from core.profiles import SC_CATALOG, coding_of
+
+    assert coding_of("ldpc_bpsk") == "ldpc_648_r12"
+    assert SC_CATALOG["ldpc_bpsk"].coding in CODING_CATALOG
+    assert SC_CATALOG["ldpc_bpsk"].profile.sps == 256
+    assert [p.profile.sps for p in SC_CATALOG.values() if p.profile.sps == 256] == [256]
