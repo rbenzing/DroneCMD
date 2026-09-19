@@ -6,6 +6,7 @@ from core.turbo import (
     interleave_qpp,
     qpp_perm,
     rsc_encode,
+    turbo_decode,
     turbo_encode,
 )
 
@@ -55,3 +56,58 @@ def test_turbo_encode_layout_and_recover_systematic() -> None:
     # parity1 block equals rsc_encode(info) parity
     _, par1 = rsc_encode(info)
     assert np.array_equal(cw[K + 6 : K + 6 + (K + 3)], par1)
+
+
+def _split(cw: np.ndarray, K: int) -> tuple:
+    info = cw[:K]
+    t1s = cw[K : K + 3]
+    t2s = cw[K + 3 : K + 6]
+    par1 = cw[K + 6 : K + 6 + (K + 3)]
+    par2 = cw[K + 6 + (K + 3) :]
+    return info, t1s, t2s, par1, par2
+
+
+def _perm256() -> np.ndarray:
+    return qpp_perm(256, 31, 64)
+
+
+def test_turbo_noiseless_roundtrip_rate13() -> None:
+    K = 256
+    perm = _perm256()
+    rng = np.random.default_rng(1)
+    info = rng.integers(0, 2, size=K).astype(np.uint8)
+    cw = turbo_encode(info, perm)
+    llr = np.where(cw == 0, 6.0, -6.0).astype(np.float64)
+    i, t1, t2, p1, p2 = _split(llr, K)
+    out = turbo_decode(i, t1, t2, p1, p2, perm)
+    assert np.array_equal(out, info)
+
+
+def test_turbo_corrects_errors() -> None:
+    K = 256
+    perm = _perm256()
+    rng = np.random.default_rng(2)
+    info = rng.integers(0, 2, size=K).astype(np.uint8)
+    cw = turbo_encode(info, perm)
+    llr = np.where(cw == 0, 3.0, -3.0).astype(np.float64)
+    flip = rng.choice(llr.size, size=llr.size // 12, replace=False)  # ~8% flips
+    llr[flip] = -llr[flip]
+    i, t1, t2, p1, p2 = _split(llr, K)
+    out = turbo_decode(i, t1, t2, p1, p2, perm)
+    assert np.array_equal(out, info)
+
+
+def test_turbo_scale_invariance() -> None:
+    K = 256
+    perm = _perm256()
+    rng = np.random.default_rng(3)
+    info = rng.integers(0, 2, size=K).astype(np.uint8)
+    cw = turbo_encode(info, perm)
+    llr = np.where(cw == 0, 2.0, -2.0).astype(np.float64)
+    flip = rng.choice(llr.size, size=20, replace=False)
+    llr[flip] = -llr[flip]
+    i, t1, t2, p1, p2 = _split(llr, K)
+    base = turbo_decode(i, t1, t2, p1, p2, perm)
+    for k in (1e-3, 5.0, 1e3):
+        out = turbo_decode(k * i, k * t1, k * t2, k * p1, k * p2, perm)
+        assert np.array_equal(out, base)

@@ -96,6 +96,105 @@ def turbo_encode(info: Bits, perm: npt.NDArray[np.intp]) -> Bits:
     return out.astype(np.uint8)  # 3K + 12
 
 
+_NEG = -1e30
+
+
+def bcjr_maxlogmap(ls: LLRs, lp: LLRs, la: LLRs) -> LLRs:
+    """max-log-MAP SISO over the terminated RSC trellis (start/end state 0).
+
+    ls/lp/la: systematic / parity / a-priori LLRs (len N). Returns extrinsic LLR.
+    Convention L>0 => bit 0. gamma = 0.5*((1-2u)(ls+la) + (1-2z)lp).
+    """
+    N = int(ls.size)
+    alpha = np.full((N + 1, NSTATES), _NEG)
+    beta = np.full((N + 1, NSTATES), _NEG)
+    alpha[0, 0] = 0.0
+    beta[N, 0] = 0.0
+
+    def gam(k: int, s: int, u: int) -> float:
+        z = PAR[s][u]
+        return 0.5 * ((1 - 2 * u) * (ls[k] + la[k]) + (1 - 2 * z) * lp[k])
+
+    for k in range(N):
+        for s in range(NSTATES):
+            a = alpha[k, s]
+            if a == _NEG:
+                continue
+            for u in (0, 1):
+                ns = NXT[s][u]
+                m = a + gam(k, s, u)
+                if m > alpha[k + 1, ns]:
+                    alpha[k + 1, ns] = m
+    for k in range(N - 1, -1, -1):
+        for s in range(NSTATES):
+            for u in (0, 1):
+                ns = NXT[s][u]
+                b = beta[k + 1, ns]
+                if b == _NEG:
+                    continue
+                m = b + gam(k, s, u)
+                if m > beta[k, s]:
+                    beta[k, s] = m
+    le = np.zeros(N, dtype=np.float64)
+    for k in range(N):
+        m0 = _NEG
+        m1 = _NEG
+        for s in range(NSTATES):
+            a = alpha[k, s]
+            if a == _NEG:
+                continue
+            for u in (0, 1):
+                ns = NXT[s][u]
+                b = beta[k + 1, ns]
+                if b == _NEG:
+                    continue
+                metric = a + gam(k, s, u) + b
+                if u == 0:
+                    if metric > m0:
+                        m0 = metric
+                else:
+                    if metric > m1:
+                        m1 = metric
+        le[k] = (m0 - m1) - ls[k] - la[k]
+    return le
+
+
+def turbo_decode(
+    ls_info: LLRs,
+    ls_tail1: LLRs,
+    ls_tail2: LLRs,
+    lp1: LLRs,
+    lp2: LLRs,
+    perm: npt.NDArray[np.intp],
+    max_iters: int = 8,
+    scale: float = 0.7,
+) -> Bits:
+    """Iterative extrinsic-exchange max-log-MAP turbo decoder.
+
+    Returns hard-decided info bits (length K). LLR convention L>0 => bit 0.
+    """
+    K = int(ls_info.size)
+    ls1 = np.concatenate([ls_info, ls_tail1])  # decoder 1 systematic (K+3)
+    ls2 = np.concatenate([ls_info[perm], ls_tail2])  # decoder 2 systematic (K+3)
+    la1_info = np.zeros(K, dtype=np.float64)
+    le1_info = np.zeros(K, dtype=np.float64)
+    de = np.zeros(K, dtype=np.float64)
+    for _ in range(max_iters):
+        la1 = np.concatenate([la1_info, np.zeros(3)])
+        le1 = bcjr_maxlogmap(ls1, lp1, la1)
+        le1_info = le1[:K]
+        la2_info = scale * le1_info[perm]
+        la2 = np.concatenate([la2_info, np.zeros(3)])
+        le2 = bcjr_maxlogmap(ls2, lp2, la2)
+        le2_info = le2[:K]
+        # deinterleave le2 extrinsic back to natural order
+        de = np.empty(K, dtype=np.float64)
+        de[perm] = le2_info
+        la1_info = scale * de
+    total = ls_info + le1_info + de
+    return (total < 0).astype(np.uint8)
+
+
 PUNCTURE_R12: Tuple[int, ...] = (
     1,
     0,
