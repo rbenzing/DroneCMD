@@ -100,11 +100,57 @@ class _Repetition:
         return DecodeResult(bits=bits)
 
 
+def _parity(x: int) -> int:
+    """Parity (XOR of all bits) of a non-negative int."""
+    return bin(x).count("1") & 1
+
+
+def _conv_encode(info_bits: Bits, generators: Tuple[int, int], k: int) -> Bits:
+    """Rate-1/2, constraint-length-k convolutional encode with zero-tail.
+
+    ``k-1`` zero bits are appended so the encoder starts and ends in state 0.
+    Two output bits per input bit (generator taps XORed over the register).
+    """
+    g0, g1 = generators
+    tail = k - 1
+    stream = np.concatenate(
+        [np.asarray(info_bits, dtype=np.uint8), np.zeros(tail, dtype=np.uint8)]
+    )
+    state = 0
+    out = np.empty(2 * stream.size, dtype=np.uint8)
+    top = 1 << (k - 1)
+    mask = top - 1
+    for i, u in enumerate(stream):
+        reg = (int(u) * top) | state
+        out[2 * i] = _parity(reg & g0)
+        out[2 * i + 1] = _parity(reg & g1)
+        state = (reg >> 1) & mask
+    return out
+
+
+class _Convolutional:
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.k = int(spec.params["constraint_length"])  # type: ignore[call-overload]
+        gens = spec.params["generators_octal"]
+        self.generators = (int(gens[0]), int(gens[1]))  # type: ignore[index]
+        self.puncture: Tuple[int, ...] = tuple(spec.params.get("puncture", ()))  # type: ignore[arg-type]
+
+    def encode(self, info_bits: Bits) -> Bits:
+        coded = _conv_encode(info_bits, self.generators, self.k)
+        return coded  # puncturing added in Task 2
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        raise NotImplementedError("convolutional decode: P3b Task 3")
+
+
 def make_codec(spec: CodingSpec) -> Codec:
     if spec.family == CodeFamily.UNCODED:
         return _Uncoded(spec)
     if spec.family == CodeFamily.REPETITION:
         return _Repetition(spec)
+    if spec.family == CodeFamily.CONVOLUTIONAL:
+        return _Convolutional(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )

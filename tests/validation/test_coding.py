@@ -22,7 +22,11 @@ def test_make_codec_unimplemented_families_raise() -> None:
     from core.coding import CODING_CATALOG, CodeFamily, make_codec
 
     for name, spec in CODING_CATALOG.items():
-        if spec.family in (CodeFamily.UNCODED, CodeFamily.REPETITION):
+        if spec.family in (
+            CodeFamily.UNCODED,
+            CodeFamily.REPETITION,
+            CodeFamily.CONVOLUTIONAL,
+        ):
             make_codec(spec)  # builds
         else:
             with pytest.raises(NotImplementedError):
@@ -74,3 +78,31 @@ def test_interleaver_roundtrip_bits_and_llrs() -> None:
         assert np.array_equal(deinterleave(interleave(b, depth), depth), b)
         llr = np.linspace(-3, 3, 20).astype(np.float64)
         assert np.allclose(deinterleave(interleave(llr, depth), depth), llr)
+
+
+def test_conv_encoder_structure() -> None:
+    from core.coding import CODING_CATALOG, make_codec
+
+    codec = make_codec(CODING_CATALOG["conv_k7_r12"])
+    info = np.array([1, 0, 1, 1, 0, 0, 1, 0], dtype=np.uint8)
+    coded = codec.encode(info)
+    # rate 1/2 with K-1=6 zero-tail bits -> 2*(len+6) coded bits
+    assert coded.size == 2 * (info.size + 6)
+    assert coded.dtype == np.uint8
+    # all-zero input -> all-zero output (encoder stays in state 0)
+    z = make_codec(CODING_CATALOG["conv_k7_r12"]).encode(np.zeros(8, dtype=np.uint8))
+    assert not z.any()
+    # deterministic
+    assert np.array_equal(coded, make_codec(CODING_CATALOG["conv_k7_r12"]).encode(info))
+    # a leading 1 (state 0) emits both generator MSB taps = (1,1) for 133/171
+    lead = make_codec(CODING_CATALOG["conv_k7_r12"]).encode(
+        np.array([1], dtype=np.uint8)
+    )
+    assert lead[0] == 1 and lead[1] == 1
+
+
+def test_make_codec_builds_convolutional() -> None:
+    from core.coding import CODING_CATALOG, make_codec
+
+    codec = make_codec(CODING_CATALOG["conv_k7_r12"])
+    assert codec.spec.family.value == "convolutional"
