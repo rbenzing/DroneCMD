@@ -433,7 +433,42 @@ class _BCH:
         return cast(Bits, out)
 
     def decode(self, received: SoftOrHard) -> DecodeResult:
-        raise NotImplementedError("BCH decode implemented in Task 3")
+        r_arr = np.asarray(received)
+        if r_arr.dtype.kind == "f":
+            bits = (cast(npt.NDArray[np.float64], r_arr) < 0).astype(np.uint8)
+        else:
+            bits = cast(npt.NDArray[np.uint8], r_arr).astype(np.uint8)
+        n = int(bits.size)
+        k = n - self.parity_len
+        if k <= 0:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8), meta={"decode_ok": False}
+            )
+        poly = [int(b) for b in bits]
+        synd = [
+            self.field.poly_eval(poly, self.field.pow(2, j))
+            for j in range(1, self.nsym + 1)
+        ]
+        if max(synd) == 0:
+            return DecodeResult(bits=bits[:k], meta={"decode_ok": True, "n_errors": 0})
+        try:
+            err_loc = berlekamp_massey(self.field, synd, self.nsym)
+            err_pos = chien_search(self.field, err_loc[::-1], n)
+            corrected = bits.copy()
+            for p in err_pos:
+                corrected[p] ^= 1
+            check = [
+                self.field.poly_eval([int(b) for b in corrected], self.field.pow(2, j))
+                for j in range(1, self.nsym + 1)
+            ]
+            if max(check) != 0:
+                return DecodeResult(bits=bits[:k], meta={"decode_ok": False})
+            return DecodeResult(
+                bits=corrected[:k],
+                meta={"decode_ok": True, "n_errors": len(err_pos)},
+            )
+        except (ValueError, ZeroDivisionError):
+            return DecodeResult(bits=bits[:k], meta={"decode_ok": False})
 
 
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:

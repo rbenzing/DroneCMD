@@ -405,3 +405,62 @@ def test_bch_catalog_params() -> None:
         assert spec.soft_input is False  # BCH is hard-input
     assert CODING_CATALOG["bch_63_51"].params["prim_poly"] == 0x43
     assert CODING_CATALOG["bch_255_223"].params["prim_poly"] == 0x11D
+
+
+def _bch(name: str):
+    from core.coding import CODING_CATALOG, make_codec
+
+    return make_codec(CODING_CATALOG[name])
+
+
+def test_bch_noiseless_roundtrip_all_codes() -> None:
+    import numpy as np
+
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    # bch_63_51 (k=51) needs a small payload; 255-codes take the full frame.
+    cases = [
+        ("bch_255_239", bytes(range(24))),
+        ("bch_255_223", bytes(range(24))),
+        ("bch_63_51", bytes([0xA5, 0x3C, 0x81])),  # 24 bits + 16 CRC = 40 <= 51
+    ]
+    for name, pl in cases:
+        codec = _bch(name)
+        payload = np.unpackbits(np.frombuffer(pl, dtype=np.uint8))
+        frame = frame_with_crc(payload.astype(np.uint8))
+        coded = codec.encode(frame)
+        out = codec.decode(coded)  # hard bits, no errors
+        recovered, ok = check_and_strip_crc(out.bits)
+        assert ok and np.array_equal(recovered, payload)
+
+
+def test_bch_corrects_up_to_t_bit_errors() -> None:
+    import numpy as np
+
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    codec = _bch("bch_255_223")  # t=4
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    coded = codec.encode(frame).copy()
+    for p in (3, 40, 100, 175):  # flip 4 = t bits
+        coded[p] ^= 1
+    out = codec.decode(coded)
+    recovered, ok = check_and_strip_crc(out.bits)
+    assert ok and np.array_equal(recovered, payload)
+
+
+def test_bch_fails_loudly_beyond_t() -> None:
+    import numpy as np
+
+    from core.coding import check_and_strip_crc, frame_with_crc
+
+    codec = _bch("bch_255_239")  # t=2
+    payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+    frame = frame_with_crc(payload.astype(np.uint8))
+    coded = codec.encode(frame).copy()
+    for p in (3, 40, 100, 175, 200):  # 5 > t=2 bit errors: uncorrectable
+        coded[p] ^= 1
+    out = codec.decode(coded)
+    _, ok = check_and_strip_crc(out.bits)
+    assert ok is False  # loud failure, not silent wrong payload
