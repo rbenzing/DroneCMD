@@ -37,8 +37,8 @@ from scipy.signal import correlate, find_peaks, welch
 # Import from core modules
 try:
     from core.signal_processing import (
-        SignalProcessor, QualityMonitor, detect_packets, find_preamble,
-        analyze_signal_quality
+        SignalProcessor, QualityMonitor, find_preamble, analyze_signal_quality,
+        detect_packets as _sp_detect_packets,
     )
     from utils.fileio import read_iq_file
     ENHANCED_AVAILABLE = True
@@ -614,7 +614,12 @@ class SignalDetector:
     ) -> List[Tuple[int, int]]:
         """Enhanced detection using core signal processing."""
         try:
-            regions = detect_packets(iq_data, threshold, min_length)
+            # Call the core (numpy) detector explicitly. The module-level
+            # ``detect_packets`` backward-compat wrapper below constructs a
+            # SignalDetector and calls detect_signals(), so using the bare name
+            # here would recurse (detect_signals -> _enhanced_detection ->
+            # detect_packets -> detect_signals -> ...) until RecursionError.
+            regions = _sp_detect_packets(iq_data, threshold, min_length)
             return [(int(start), int(end)) for start, end in regions]
         except Exception as e:
             logger.warning(f"Enhanced detection failed, falling back: {e}")
