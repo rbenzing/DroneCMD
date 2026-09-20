@@ -2,7 +2,7 @@
 """
 Enhanced Live SDR Capture System
 
-A comprehensive Software Defined Radio (SDR) capture system designed for 
+A comprehensive Software Defined Radio (SDR) capture system designed for
 professional signal acquisition and analysis. This module provides robust,
 production-ready SDR capture capabilities with support for multiple hardware
 platforms, comprehensive error handling, and advanced signal processing features.
@@ -42,10 +42,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 import warnings
-from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -57,13 +56,11 @@ from typing import (
     Dict,
     List,
     Optional,
+    Protocol,
     Tuple,
     Union,
-    Protocol,
     runtime_checkable,
 )
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import numpy.typing as npt
@@ -278,7 +275,7 @@ class SDRConfig:
         # Warn about high sample rates USB limitations
         if self.sample_rate_hz > 2.4e6:
             warnings.warn(
-                f"RTL-SDR sample rates above 2.4 MHz may lose samples due to USB bandwidth",
+                "RTL-SDR sample rates above 2.4 MHz may lose samples due to USB bandwidth",
                 UserWarning,
             )
 
@@ -624,6 +621,134 @@ class RTLSDRHardware:
         return self._is_connected and self.sdr is not None
 
 
+class SoapyHackRFHardware:
+    """HackRF **receive-only** hardware interface via SoapySDR (SoapyHackRF).
+
+    This backend NEVER transmits — it only opens an RX stream and reads IQ
+    samples, the passive/lawful path for capture and analysis. (HackRF is
+    half-duplex; transmit is deliberately out of scope for this class.)
+
+    Requires the native SoapySDR runtime plus the SoapyHackRF module (e.g. the
+    PothosSDR Windows bundle) and the HackRF USB interface bound to a usable
+    driver (WinUSB via Zadig on Windows). Implements the same
+    :class:`SDRHardwareInterface` protocol as :class:`RTLSDRHardware`.
+    """
+
+    def __init__(self, config: SDRConfig) -> None:
+        """Initialize the SoapySDR HackRF (RX) interface."""
+        if not SOAPY_SDR_AVAILABLE:
+            raise RuntimeError(
+                "SoapySDR not available; install the SoapySDR runtime + "
+                "SoapyHackRF (e.g. the PothosSDR bundle) to use the HackRF platform"
+            )
+        self.config = config
+        self.sdr: Optional[Any] = None
+        self._stream: Optional[Any] = None
+        self._is_connected = False
+
+    def open(self) -> None:
+        """Open the HackRF via SoapySDR."""
+        try:
+            args: Dict[str, str] = {"driver": "hackrf"}
+            if self.config.device_index:
+                args["device"] = str(self.config.device_index)
+            self.sdr = SoapySDR.Device(args)
+            self._is_connected = True
+            logger.info("Connected to HackRF via SoapySDR")
+        except Exception as e:
+            logger.error(f"Failed to connect to HackRF: {e}")
+            raise RuntimeError(f"Cannot connect to HackRF: {e}") from e
+
+    def close(self) -> None:
+        """Deactivate/close the RX stream and release the device."""
+        if self.sdr is not None:
+            try:
+                if self._stream is not None:
+                    self.sdr.deactivateStream(self._stream)
+                    self.sdr.closeStream(self._stream)
+                logger.info("HackRF connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing HackRF: {e}")
+            finally:
+                self._stream = None
+                self.sdr = None
+                self._is_connected = False
+
+    def configure(self, config: SDRConfig) -> None:
+        """Configure the RX chain (sample rate, frequency, bandwidth, gain) and
+        set up the complex-float32 receive stream."""
+        if self.sdr is None:
+            raise RuntimeError("HackRF not connected")
+        try:
+            ch = 0
+            rx = SoapySDR.SOAPY_SDR_RX
+            self.sdr.setSampleRate(rx, ch, float(config.sample_rate_hz))
+            self.sdr.setFrequency(rx, ch, float(config.frequency_hz))
+            if config.bandwidth_hz:
+                self.sdr.setBandwidth(rx, ch, float(config.bandwidth_hz))
+            if config.gain_mode == GainMode.AUTO:
+                try:
+                    self.sdr.setGainMode(rx, ch, True)  # hardware AGC if supported
+                except Exception:
+                    self.sdr.setGain(rx, ch, 32.0)  # sane manual default
+            elif config.gain_mode == GainMode.MANUAL and config.gain_db is not None:
+                self.sdr.setGain(rx, ch, float(config.gain_db))
+            self._stream = self.sdr.setupStream(rx, SoapySDR.SOAPY_SDR_CF32)
+            self.sdr.activateStream(self._stream)
+            logger.info(
+                f"HackRF configured: {config.frequency_hz/1e6:.3f} MHz, "
+                f"{config.sample_rate_hz/1e6:.3f} MSps, gain: {config.gain_mode.value}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to configure HackRF: {e}")
+            raise RuntimeError(f"Cannot configure HackRF: {e}") from e
+
+    def read_samples(self, num_samples: int) -> IQSamples:
+        """Read ``num_samples`` complex64 IQ samples from the RX stream.
+
+        ``readStream`` returns in bounded chunks, so this loops until the
+        request is filled, raising on a stream error or a persistent timeout.
+        """
+        if self.sdr is None or self._stream is None:
+            raise RuntimeError("HackRF not connected/configured")
+        try:
+            out = np.empty(num_samples, dtype=np.complex64)
+            filled = 0
+            empty_reads = 0
+            max_empty = 8 + 4 * (num_samples // 1024 + 1)
+            while filled < num_samples:
+                chunk = np.empty(num_samples - filled, dtype=np.complex64)
+                status = self.sdr.readStream(
+                    self._stream, [chunk], chunk.size, timeoutUs=1_000_000
+                )
+                n = int(status.ret)
+                if n > 0:
+                    out[filled : filled + n] = chunk[:n]
+                    filled += n
+                    empty_reads = 0
+                elif n < 0:
+                    raise RuntimeError(f"SoapySDR readStream error code {n}")
+                else:
+                    empty_reads += 1
+                    if empty_reads > max_empty:
+                        raise RuntimeError("HackRF read timed out")
+            return out
+        except Exception as e:
+            logger.error(f"Failed to read samples from HackRF: {e}")
+            raise RuntimeError(f"Cannot read samples: {e}") from e
+
+    async def read_samples_async(self, num_samples: int) -> IQSamples:
+        """Asynchronously read IQ samples (blocking read in a thread pool)."""
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            return await loop.run_in_executor(executor, self.read_samples, num_samples)
+
+    @property
+    def is_connected(self) -> bool:
+        """Check whether the HackRF is connected."""
+        return self._is_connected and self.sdr is not None
+
+
 class EnhancedLiveCapture:
     """
     Enhanced live SDR capture system with comprehensive features.
@@ -688,8 +813,10 @@ class EnhancedLiveCapture:
         """Create appropriate hardware interface for configured platform."""
         if self.config.platform in (SDRPlatform.RTL_SDR, SDRPlatform.RTL_SDR_TCP):
             return RTLSDRHardware(self.config)
+        elif self.config.platform == SDRPlatform.HACKRF:
+            return SoapyHackRFHardware(self.config)
         elif SOAPY_SDR_AVAILABLE:
-            # Could implement SoapySDR interface for other platforms
+            # Other SoapySDR-backed platforms (Airspy/SDRplay/…) not yet wired.
             raise NotImplementedError(
                 f"Platform {self.config.platform.value} not yet implemented"
             )
