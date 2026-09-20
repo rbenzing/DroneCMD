@@ -70,6 +70,34 @@ pip install -e ".[viz]"        # Matplotlib / Plotly visualization
 pip install -e ".[all]"        # Everything
 ```
 
+### HackRF hardware setup
+
+DroneCMD selects a HackRF **receive** backend automatically:
+
+1. **SoapySDR** (`SoapyHackRFHardware`) — in-process, used when the SoapySDR
+   *Python* bindings are importable in the running interpreter.
+2. **`hackrf_transfer` CLI** (`HackRFTransferHardware`) — a portable
+   subprocess fallback used when SoapySDR's Python bindings are missing or
+   ABI-mismatched. Works on any Python version.
+
+**Windows:** install [PothosSDR](https://downloads.myriadrf.org/builds/PothosSDR/)
+(bundles `libhackrf`, `hackrf_info`, `hackrf_transfer`, SoapySDR + SoapyHackRF),
+then run **Zadig** → *Options ▸ List All Devices* → select **HackRF One** →
+install the **WinUSB** driver. Verify with `hackrf_info` (it should print the
+board ID/serial). DroneCMD finds the PothosSDR tools automatically even if they
+are not on `PATH`.
+
+> **Note:** PothosSDR ships the SoapySDR Python bindings for **Python 3.9 only**.
+> On a newer interpreter the SoapySDR backend is not importable, so DroneCMD
+> falls back to the `hackrf_transfer` CLI backend automatically — no action
+> needed. (For the in-process SoapySDR path on Windows, run under Python 3.9 or
+> use Linux distro `python3-soapysdr` packages that match your interpreter.)
+
+**Linux:** install `hackrf` and `soapysdr-module-hackrf` (plus
+`python3-soapysdr` for the in-process backend) from your distribution.
+
+All HackRF backends are **receive-only** — they never transmit.
+
 ---
 
 ## 🖥️ CLI Usage
