@@ -7,6 +7,8 @@ internal length header.
 """
 from __future__ import annotations
 
+from typing import List
+
 import numpy as np
 import numpy.typing as npt
 
@@ -108,3 +110,33 @@ def symbol_neighbors(
     """
     d = max(1, min(degree, span))
     return np.sort(rng.choice(span, size=d, replace=False)).astype(np.intp)
+
+
+def build_precode(
+    k: int, seed: int, precode_rate: float, precode_degree: int
+) -> List[npt.NDArray[np.intp]]:
+    """R = round(k*(1/precode_rate - 1)) systematic parity rows over k sources.
+
+    Parity row j = a seeded sparse subset (size min(precode_degree,k)) of source
+    indices. A distinct seed offset keeps precode structure uncorrelated with
+    the LT layer. Deterministic given (k, seed).
+
+    Args:
+        k: Number of source symbols.
+        seed: Base seed for deterministic RNG initialization.
+        precode_rate: Code rate (must be < 1.0 for non-empty parity).
+        precode_degree: Maximum degree per parity row.
+
+    Returns:
+        List of R sorted arrays of intp indices, each representing source
+        connections for a parity row. Empty list if rate >= 1.0 or k <= 0.
+    """
+    if precode_rate >= 1.0 or k <= 0:
+        return []
+    r = int(round(k * (1.0 / precode_rate - 1.0)))
+    rows: List[npt.NDArray[np.intp]] = []
+    for j in range(r):
+        rng = np.random.default_rng((seed + 0x9E3779B1 + j) & 0xFFFFFFFF)
+        deg = max(1, min(precode_degree, k))
+        rows.append(np.sort(rng.choice(k, size=deg, replace=False)).astype(np.intp))
+    return rows

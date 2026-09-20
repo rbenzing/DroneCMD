@@ -34,3 +34,21 @@ def test_sample_degree_and_neighbors_deterministic() -> None:
     nb2 = symbol_neighbors(np.random.default_rng(7), 5, 40)
     assert np.array_equal(nb1, nb2)
     assert nb1.size == 5 and len(set(nb1.tolist())) == 5 and nb1.max() < 40
+
+
+def test_build_precode_shape_and_determinism() -> None:
+    from core.fountain import build_precode
+
+    p1 = build_precode(40, 12345, 0.9, 4)  # rate 0.9 -> R = round(40*(1/0.9-1)) = 4
+    p2 = build_precode(40, 12345, 0.9, 4)
+    assert len(p1) == len(p2) == 4
+    for a, b in zip(p1, p2):
+        assert np.array_equal(a, b)
+    for row in p1:
+        assert row.size >= 1 and row.max() < 40 and len(set(row.tolist())) == row.size
+
+
+def test_build_precode_rate_one_is_empty() -> None:
+    from core.fountain import build_precode
+
+    assert build_precode(40, 1, 1.0, 4) == []  # rate 1.0 -> no parity
