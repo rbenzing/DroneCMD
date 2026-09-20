@@ -10,6 +10,7 @@ zero (used for shorten-from-the-end rate matching; see design 0012).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, List, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -135,3 +136,103 @@ def polar_encode(info_bits: Bits, frozen_mask: npt.NDArray[np.bool_]) -> Bits:
     u = np.zeros(n, dtype=np.uint8)
     u[positions] = info
     return polar_transform(u)
+
+
+def _f(a: Real, b: Real) -> Real:
+    """Min-sum check-node combine: sign(a)*sign(b)*min(|a|,|b|).
+
+    Scale-invariant (linearly homogeneous in a common scale of ``a``/``b``),
+    which is what keeps the whole SCL decoder scale-invariant.
+    """
+    combined = np.sign(a) * np.sign(b) * np.minimum(np.abs(a), np.abs(b))
+    return np.asarray(combined, dtype=np.float64)
+
+
+def _g(a: Real, b: Real, u: Real) -> Real:
+    """Bit-node combine given a decided (0/1-valued) partial-sum vector ``u``."""
+    return np.asarray(b + (1.0 - 2.0 * u) * a, dtype=np.float64)
+
+
+def scl_decode(
+    llr: Real,
+    frozen_mask: npt.NDArray[np.bool_],
+    list_size: int,
+    crc_check: Callable[[Bits], bool],
+) -> Tuple[Bits, bool]:
+    """CRC-aided successive-cancellation list decoder (min-sum f-node).
+
+    Operates in the LLR domain over the same non-bit-reversed butterfly as
+    ``polar_transform`` (``L>0 => bit 0``). At each bit position, the bit LLR
+    is computed via the recursive SC f/g formula over contiguous halves (the
+    encoder's ``x_left = T(u_left) XOR T(u_right)``, ``x_right = T(u_right)``
+    structure): the f-branch combines the two channel-LLR halves directly,
+    while the g-branch re-transforms the already-decided first-half bits
+    (``polar_transform``) to fold them back in as a bit-corrected observation
+    of the second half. Every path tracks an approximate path metric
+    (``PM += |LLR|`` on a sign mismatch / a forced-zero frozen bit), pruned to
+    the best ``list_size`` after each bit. All metrics are linearly
+    homogeneous in a common LLR scale, so the decoder is scale-invariant.
+
+    Args:
+        llr: Length-n channel LLR vector (``L>0`` favors bit 0).
+        frozen_mask: Length-n boolean mask, True at frozen positions.
+        list_size: Maximum number of candidate paths to retain.
+        crc_check: Callback receiving the decoded info-bit vector (bits at
+            the unfrozen positions, in position order) and returning whether
+            it passes an externally-defined CRC/frame check.
+
+    Returns:
+        Tuple of (info_bits, crc_passed): the info bits of the lowest-PM path
+        whose info bits pass ``crc_check``, or the lowest-PM path overall
+        (with ``crc_passed=False``) if no path passes.
+    """
+    n = frozen_mask.size
+    channel = np.asarray(llr, dtype=np.float64)
+
+    def bit_llr(u_hat: Bits, i: int) -> float:
+        # LLR of bit i given the channel LLRs and the decisions u_hat[:i],
+        # via the recursive SC formula (non-bit-reversed, contiguous halves).
+        def rec(level_llr: Real, decided: Bits, idx: int, size: int) -> float:
+            if size == 1:
+                return float(level_llr[0])
+            half = size // 2
+            if idx < half:
+                left = _f(level_llr[:half], level_llr[half:])
+                return rec(left, decided[:half], idx, half)
+            u_left = decided[:half]  # fully-decided first-half bits
+            right = _g(
+                level_llr[:half],
+                level_llr[half:],
+                polar_transform(u_left).astype(np.float64),
+            )
+            return rec(right, decided[half:], idx - half, half)
+
+        return rec(channel, u_hat, i, n)
+
+    paths: List[Tuple[Bits, float]] = [(np.zeros(n, dtype=np.uint8), 0.0)]
+    for i in range(n):
+        candidates: List[Tuple[Bits, float]] = []
+        for u_hat, pm in paths:
+            bit_l = bit_llr(u_hat, i)
+            if frozen_mask[i]:
+                forced = u_hat.copy()
+                forced[i] = 0
+                penalty = abs(bit_l) if bit_l < 0 else 0.0
+                candidates.append((forced, pm + penalty))
+            else:
+                for bit in (0, 1):
+                    forked = u_hat.copy()
+                    forked[i] = bit
+                    decided_bit = 0 if bit_l >= 0 else 1
+                    penalty = 0.0 if bit == decided_bit else abs(bit_l)
+                    candidates.append((forked, pm + penalty))
+        candidates.sort(key=lambda path: path[1])
+        paths = candidates[:list_size]
+
+    positions = np.where(~frozen_mask)[0]
+    # CRC-aided pick: lowest-PM path whose info bits pass crc_check.
+    for u_hat, _pm in paths:
+        info = u_hat[positions].astype(np.uint8)
+        if crc_check(info):
+            return info, True
+    return paths[0][0][positions].astype(np.uint8), False

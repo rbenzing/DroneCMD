@@ -96,3 +96,65 @@ def test_polar_encode_all_frozen_is_zero() -> None:
     all_frozen = np.ones(256, dtype=np.bool_)
     x = polar_encode(np.zeros(0, dtype=np.uint8), all_frozen)
     assert np.all(x == 0)
+
+
+def test_scl_noiseless_roundtrip() -> None:
+    from core.polar import build_code, polar_encode, scl_decode
+
+    code = build_code(256, 128, 2.0)
+    rng = np.random.default_rng(3)
+    info = rng.integers(0, 2, size=128).astype(np.uint8)
+    x = polar_encode(info, code.frozen_mask)
+    llr = (1.0 - 2.0 * x.astype(np.float64)) * 8.0  # L>0 => bit 0
+    out, _ = scl_decode(llr, code.frozen_mask, 8, crc_check=lambda b: True)
+    np.testing.assert_array_equal(out, info)
+
+
+def test_scl_corrects_a_few_errors() -> None:
+    from core.polar import build_code, polar_encode, scl_decode
+
+    code = build_code(256, 128, 2.0)
+    rng = np.random.default_rng(4)
+    info = rng.integers(0, 2, size=128).astype(np.uint8)
+    x = polar_encode(info, code.frozen_mask)
+    llr = (1.0 - 2.0 * x.astype(np.float64)) * 4.0
+    llr[:6] *= -0.5  # weaken/flip a few
+    out, _ = scl_decode(llr, code.frozen_mask, 8, crc_check=lambda b: True)
+    assert int(np.sum(out != info)) <= 4  # list decoding recovers most/all
+
+
+def test_scl_crc_aided_selection() -> None:
+    # The CRC callback selects a valid path even if the ML path is wrong.
+    from core.polar import build_code, polar_encode, scl_decode
+
+    code = build_code(256, 128, 2.0)
+    rng = np.random.default_rng(5)
+    info = rng.integers(0, 2, size=128).astype(np.uint8)
+    x = polar_encode(info, code.frozen_mask)
+    llr = (1.0 - 2.0 * x.astype(np.float64)) * 3.0
+    llr[10:18] *= -1.0  # inject a burst that misleads the ML path
+    good = info.tobytes()
+    out, passed = scl_decode(
+        llr, code.frozen_mask, 8, crc_check=lambda b: b.tobytes() == good
+    )
+    assert passed and np.array_equal(out, info)
+
+
+def test_scl_decode_is_scale_invariant() -> None:
+    # Every metric (f-node, g-node, path metric) is linearly homogeneous in a
+    # common LLR scale, so decoding must be invariant to a positive rescale.
+    from core.polar import build_code, polar_encode, scl_decode
+
+    code = build_code(256, 128, 2.0)
+    rng = np.random.default_rng(6)
+    info = rng.integers(0, 2, size=128).astype(np.uint8)
+    x = polar_encode(info, code.frozen_mask)
+    llr = (1.0 - 2.0 * x.astype(np.float64)) * 4.0
+    llr[:6] *= -0.5  # weaken/flip a few, same perturbation as the errors test
+
+    out1, passed1 = scl_decode(llr, code.frozen_mask, 8, crc_check=lambda b: True)
+    out2, passed2 = scl_decode(
+        llr * 17.0, code.frozen_mask, 8, crc_check=lambda b: True
+    )
+    np.testing.assert_array_equal(out1, out2)
+    assert passed1 == passed2
