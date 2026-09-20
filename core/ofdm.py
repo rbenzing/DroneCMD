@@ -23,7 +23,7 @@ from typing import Tuple
 import numpy as np
 import numpy.typing as npt
 
-from core.bitloading import qam_map
+from core.bitloading import qam_demap, qam_map
 
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
@@ -512,3 +512,51 @@ def modulate_ofdm_loaded(
             parts.append(_data_symbol_time(profile, data_syms))
     out: Complex = np.concatenate(parts).astype(np.complex128)
     return out
+
+
+def demodulate_ofdm_loaded(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Bits:
+    """Recover payload bits from an adaptively bit-loaded OFDM burst.
+
+    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
+    LS channel estimation, and per-symbol one-tap equalization as
+    :func:`demodulate_ofdm` (via :func:`ofdm_equalized_symbols`). The first
+    equalized data symbol is the fixed-QPSK allocation header (see
+    :func:`pack_allocation`/:func:`unpack_allocation`); each subsequent
+    symbol's carriers are demapped per-carrier at their signaled
+    bit-loading order via :func:`core.bitloading.qam_demap`, skipping
+    nulled carriers (``allocation[k] == 0``).
+
+    Args:
+        rx: Complex baseband samples, expected to begin at or near the STF.
+        profile: OFDM PHY profile (subcarrier/CP layout) to demodulate
+            against; must match the profile used by
+            :func:`modulate_ofdm_loaded`.
+
+    Returns:
+        Unpacked ``uint8`` bit array of concatenated payload bits (empty if
+        the burst is shorter than the STF + LTF + header preamble, i.e. on
+        sync failure or too few equalized data-carrier symbols).
+
+    Note:
+        Like :func:`demodulate_ofdm`, this always returns its best-effort
+        decode; callers that cannot guarantee ``rx`` starts at or near the
+        STF should gate on :func:`ofdm_sync_confidence` first.
+    """
+    syms = ofdm_equalized_symbols(rx, profile)
+    nd = len(profile.data_carriers)
+    if syms.size < nd:  # need at least the header symbol
+        return np.zeros(0, dtype=np.uint8)
+    grid = syms.reshape(-1, nd)  # (n_symbols, 48) equalized data carriers
+    allocation = unpack_allocation(qpsk_demap(grid[0]))
+    out: "list[Bits]" = []
+    for row in grid[1:]:
+        for k in range(nd):
+            o = int(allocation[k])
+            if o > 0:
+                out.append(qam_demap(np.asarray([row[k]], dtype=np.complex128), o))
+    if not out:
+        return np.zeros(0, dtype=np.uint8)
+    result: Bits = np.concatenate(out).astype(np.uint8)
+    return result
