@@ -89,3 +89,70 @@ def test_fountain_encode_structure() -> None:
         overhead=eps,
     )
     assert np.array_equal(coded, coded2)
+
+
+def test_fountain_noiseless_roundtrip_all_survive() -> None:
+    from core.fountain import fountain_decode, fountain_encode
+
+    rng = np.random.default_rng(5)
+    S, eps = 16, 1.0
+    payload = rng.integers(0, 2, size=200).astype(np.uint8)
+    kw = dict(
+        symbol_bits=S,
+        seed=42,
+        c=0.03,
+        delta=0.5,
+        precode_rate=0.9,
+        precode_degree=4,
+        overhead=eps,
+    )
+    coded = fountain_encode(payload, **kw)
+    rec, ok, n_erased = fountain_decode(coded, **kw)
+    assert ok and n_erased == 0
+    assert np.array_equal(rec[: payload.size], payload)
+
+
+def test_fountain_recovers_with_erasures() -> None:
+    from core.fountain import fountain_decode, fountain_encode
+
+    rng = np.random.default_rng(6)
+    S, eps = 16, 1.0
+    payload = rng.integers(0, 2, size=320).astype(np.uint8)  # K=20, N=40
+    kw = dict(
+        symbol_bits=S,
+        seed=42,
+        c=0.03,
+        delta=0.5,
+        precode_rate=0.9,
+        precode_degree=4,
+        overhead=eps,
+    )
+    coded = fountain_encode(payload, **kw).reshape(-1, S + 8)
+    # erase ~25% of symbols by corrupting their data so per-symbol CRC fails
+    n = coded.shape[0]
+    for i in rng.choice(n, size=n // 4, replace=False):
+        coded[i, 0] ^= 1  # flips data, CRC no longer matches -> erased
+    rec, ok, n_erased = fountain_decode(coded.reshape(-1), **kw)
+    assert ok and n_erased == n // 4
+    assert np.array_equal(rec[: payload.size], payload)
+
+
+def test_fountain_loud_fail_too_many_erasures() -> None:
+    from core.fountain import fountain_decode, fountain_encode
+
+    rng = np.random.default_rng(9)
+    S, eps = 16, 1.0
+    payload = rng.integers(0, 2, size=320).astype(np.uint8)
+    kw = dict(
+        symbol_bits=S,
+        seed=42,
+        c=0.03,
+        delta=0.5,
+        precode_rate=0.9,
+        precode_degree=4,
+        overhead=eps,
+    )
+    coded = fountain_encode(payload, **kw).reshape(-1, S + 8)
+    coded[:, 0] ^= 1  # erase (almost) everything
+    rec, ok, _ = fountain_decode(coded.reshape(-1), **kw)
+    assert not ok  # loud fail, no silent wrong payload

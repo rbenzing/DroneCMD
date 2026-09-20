@@ -7,7 +7,7 @@ internal length header.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -218,3 +218,175 @@ def fountain_encode(
         out[i, :symbol_bits] = enc
         out[i, symbol_bits:] = crc8(enc)
     return out.reshape(-1)
+
+
+def gf2_solve(
+    rows: List[int], rhs: Bits, n_cols: int
+) -> Tuple[Bits, npt.NDArray[np.bool_]]:
+    """Solve a GF(2) linear system A * x = rhs by Gauss-Jordan elimination.
+
+    Each row of `A` is packed as a Python int bitmask over `n_cols` columns
+    (bit c set means column c participates in that row's XOR constraint);
+    `rhs` carries the corresponding S-bit right-hand side for each row. The
+    system is reduced to row-reduced echelon form (RREF), applying the same
+    row XORs to the S-bit RHS vectors so that each pivot row's RHS ends up
+    holding the resolved value for its pivot column. A column is only
+    reported as resolved when its pivot row is a "clean" single-bit row
+    (i.e. no other column's bit remains set in that row) -- this rules out
+    columns that never received a full row reduction (e.g. because the
+    system ran out of rows before that column could be isolated).
+
+    Args:
+        rows: Row incidence bitmasks, one Python int per row; bit c set
+            means column c appears in that row's XOR.
+        rhs: (n_rows, S) uint8 array; row r holds the S-bit RHS for `rows[r]`.
+        n_cols: Total number of columns (L intermediates) in the system.
+
+    Returns:
+        Tuple of:
+            x: (n_cols, S) uint8 array; x[c] is the resolved value for
+                column c if resolved[c] is True, else all-zero.
+            resolved: (n_cols,) bool array; True where column c was
+                recovered as a clean single-bit pivot.
+    """
+    a = list(rows)
+    b = rhs.copy()
+    n_rows = len(a)
+    s = b.shape[1]
+    pivot_row_of_col: List[int] = [-1] * n_cols
+    r = 0
+    for c in range(n_cols):
+        piv = -1
+        for rr in range(r, n_rows):
+            if (a[rr] >> c) & 1:
+                piv = rr
+                break
+        if piv == -1:
+            continue
+        a[r], a[piv] = a[piv], a[r]
+        b[[r, piv]] = b[[piv, r]]
+        for rr in range(n_rows):
+            if rr != r and ((a[rr] >> c) & 1):
+                a[rr] ^= a[r]
+                b[rr] ^= b[r]
+        pivot_row_of_col[c] = r
+        r += 1
+        if r == n_rows:
+            break
+    x = np.zeros((n_cols, s), dtype=np.uint8)
+    resolved = np.zeros(n_cols, dtype=np.bool_)
+    for c in range(n_cols):
+        pr = pivot_row_of_col[c]
+        if pr != -1 and a[pr] == (1 << c):  # clean single-bit pivot
+            x[c] = b[pr]
+            resolved[c] = True
+    return x, resolved
+
+
+def _mask(indices: npt.NDArray[np.intp]) -> int:
+    """Pack an array of column indices into a single GF(2) row bitmask.
+
+    Args:
+        indices: Array of column indices (e.g. LT/precode neighbor set).
+
+    Returns:
+        Python int with bit i set for each i in `indices`.
+    """
+    m = 0
+    for i in indices.tolist():
+        m |= 1 << int(i)
+    return m
+
+
+def fountain_decode(
+    coded_bits: Bits,
+    *,
+    symbol_bits: int,
+    seed: int,
+    c: float,
+    delta: float,
+    precode_rate: float,
+    precode_degree: int,
+    overhead: float,
+) -> Tuple[Bits, bool, int]:
+    """Decode fountain-coded bits back to the original payload.
+
+    Replays the encoder's exact seeded structure: recovers K (source symbol
+    count) from N (output symbol count) and `overhead`, rebuilds the R
+    systematic precode parity rows via `build_precode`, and for each
+    surviving output symbol (CRC-8 match) replays `default_rng(seed + i)` ->
+    `sample_degree` -> `symbol_neighbors` in the same order the encoder used
+    to recover its LT neighbor set. A symbol whose per-symbol CRC-8 fails is
+    treated as erased and excluded from the GF(2) system. The L = K + R
+    intermediate symbols (K sources + R precode parities) are then solved by
+    GF(2) Gaussian elimination (`gf2_solve`) over the surviving LT rows plus
+    the R precode constraint rows (parity XOR its source neighbors = 0).
+    Decoding succeeds only if all K source columns resolve as clean pivots;
+    otherwise it fails loudly rather than returning a partially- or
+    incorrectly-recovered payload.
+
+    Args:
+        coded_bits: Flat bit array as produced by `fountain_encode` (N
+            symbols of `symbol_bits` + 8 CRC bits each), optionally with
+            some symbols' data bits corrupted (erasures).
+        symbol_bits: Number of data bits per symbol (S); must match the
+            encoder's `symbol_bits`.
+        seed: Base seed; must match the encoder's `seed`.
+        c: Robust Soliton ripple-size constant; must match the encoder's `c`.
+        delta: Robust Soliton target failure probability; must match the
+            encoder's `delta`.
+        precode_rate: Systematic precode rate; must match the encoder's
+            `precode_rate`.
+        precode_degree: Max degree per precode parity row; must match the
+            encoder's `precode_degree`.
+        overhead: Relative overhead N vs K; must match the encoder's
+            `overhead`.
+
+    Returns:
+        Tuple of:
+            payload_bits: Flat uint8 bit array of the K recovered source
+                symbols (K * symbol_bits bits), valid only if `ok` is True;
+                all-zero/empty array on failure.
+            ok: True iff all K source symbols were successfully recovered.
+            n_erased: Number of output symbols dropped due to CRC-8
+                mismatch.
+    """
+    sym = np.asarray(coded_bits, dtype=np.uint8).reshape(-1, symbol_bits + 8)
+    n_out = sym.shape[0]
+    # Recover K from N and overhead: the unique cand with
+    # ceil((1+overhead)*cand) == n_out (ceil((1+overhead)*.) is
+    # non-decreasing in cand, so at most one candidate matches).
+    k = -1
+    for cand in range(1, n_out + 1):
+        if int(np.ceil((1.0 + overhead) * cand)) == n_out:
+            k = cand
+            break
+    if k < 1:
+        return np.zeros(0, dtype=np.uint8), False, 0
+    parity_rows = build_precode(k, seed, precode_rate, precode_degree)
+    L = k + len(parity_rows)
+    pmf = robust_soliton(L, c, delta)
+    a_rows: List[int] = []
+    rhs: List[Bits] = []
+    n_erased = 0
+    for i in range(n_out):
+        data = sym[i, :symbol_bits]
+        if not np.array_equal(crc8(data), sym[i, symbol_bits:]):
+            n_erased += 1
+            continue
+        rng = np.random.default_rng((seed + i) & 0xFFFFFFFF)
+        deg = sample_degree(pmf, rng)
+        nbrs = symbol_neighbors(rng, deg, L)
+        a_rows.append(_mask(nbrs))
+        rhs.append(data)
+    # Precode constraint rows: parity_col (k+j) XOR its source neighbors = 0.
+    for j, srow in enumerate(parity_rows):
+        a_rows.append(_mask(srow) | (1 << (k + j)))
+        rhs.append(np.zeros(symbol_bits, dtype=np.uint8))
+    if not a_rows:
+        return np.zeros(0, dtype=np.uint8), False, n_erased
+    inter, resolved = gf2_solve(a_rows, np.array(rhs, dtype=np.uint8), L)
+    if not bool(resolved[:k].all()):
+        return np.zeros(0, dtype=np.uint8), False, n_erased
+    payload_bits = inter[:k].reshape(-1)
+    return payload_bits.astype(np.uint8), True, n_erased
