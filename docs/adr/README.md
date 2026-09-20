@@ -32,3 +32,4 @@ them.
 | [0012](0012-subagent-driven-development-workflow.md) | Subagent-driven development workflow | Accepted |
 | [0013](0013-ldpc-normalized-min-sum.md) | LDPC decoder — normalized min-sum (scale-invariant) | Accepted |
 | [0014](0014-turbo-max-log-map.md) | Turbo decoder — max-log-MAP + extrinsic scaling (scale-invariant) | Accepted |
+| [0015](0015-soft-demod-phase-ramp-fix.md) | Soft-demod phase-ramp fix — DD payload tracking + L&R CFO estimator | Accepted |

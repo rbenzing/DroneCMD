@@ -875,3 +875,43 @@ def test_sc_soft_bits_empty_on_noise() -> None:
         np.complex128
     )
     assert sc_soft_bits(noise, SCProfile(sps=16), bits_per_symbol=1).size == 0
+
+
+def test_sc_soft_bits_no_phase_ramp_sign_flips_low_snr() -> None:
+    """Soft LLR signs must stay correct at low SNR (phase-ramp regression).
+
+    A spurious residual-CFO estimate at low SNR injects a phase ramp across
+    the payload; the constant preamble-phase alignment cannot remove it, so
+    later symbols rotate past +/-90 degrees and the LLR signs flip -- worse on
+    longer frames. This capped every soft codec end-to-end (the demod, not the
+    code, was the limiter). The fix is decision-directed payload phase
+    tracking on the soft path plus the lower-variance L&R CFO estimator, so
+    the aligned centers no longer carry an uncorrected ramp. Regression guard:
+    across many low-SNR frames the mean LLR sign-error rate must be small and
+    no single frame may collapse to a coin-flip-or-worse (>20%).
+    """
+    import numpy as np
+
+    from core.single_carrier import SCProfile, sc_soft_bits
+    from validation.synth.channel import add_awgn_at_snr
+    from validation.synth.modulators import modulate
+    from validation.types import ModScheme
+
+    payload = bytes([(i * 37 + 11) & 0xFF for i in range(60)])
+    tx_bits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    prof = SCProfile(sps=8)
+    clean = modulate(payload, ModScheme.BPSK, sps=8).astype(np.complex128)
+
+    sign_errs = []
+    for seed in range(20):
+        g = np.random.default_rng(seed)
+        noisy, _, _ = add_awgn_at_snr(clean, 6.0, g)
+        llr = sc_soft_bits(noisy.astype(np.complex128), prof, bits_per_symbol=1)
+        assert llr.size > 0
+        m = min(llr.size, tx_bits.size)
+        pred = (llr[:m] < 0).astype(np.uint8)  # L>0 => bit 0
+        sign_errs.append(float(np.mean(pred != tx_bits[:m])))
+
+    sign_errs_arr = np.asarray(sign_errs)
+    assert sign_errs_arr.mean() < 0.05
+    assert sign_errs_arr.max() < 0.20
