@@ -23,6 +23,8 @@ from typing import Tuple
 import numpy as np
 import numpy.typing as npt
 
+from core.bitloading import qam_demap, qam_map
+
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
 LLRs = npt.NDArray[np.float64]
@@ -394,4 +396,199 @@ def ofdm_soft_bits(
     out = np.empty(2 * syms.size, dtype=np.float64)
     out[0::2] = scale * syms.real
     out[1::2] = scale * syms.imag
+    return out
+
+
+_ALLOCATION_ORDER_TO_INDEX = {0: 0, 2: 1, 4: 2, 6: 3}
+_ALLOCATION_INDEX_TO_ORDER = {0: 0, 1: 2, 2: 4, 3: 6}
+
+
+def pack_allocation(allocation: "npt.NDArray[np.intp]") -> Bits:
+    """Encode a per-data-carrier bit-loading allocation as header bits.
+
+    Each carrier's order (one of ``{0, 2, 4, 6}``) is encoded as a 2-bit
+    index (``{0, 1, 2, 3}``), MSB first, so the header packs into exactly
+    ``2 * len(allocation)`` bits (96 for the default 48-data-carrier
+    profile) -- one fixed-QPSK OFDM symbol.
+
+    Args:
+        allocation: 1-D integer array of per-data-carrier bit-loading
+            orders, each one of ``{0, 2, 4, 6}``.
+
+    Returns:
+        ``uint8`` bit array of length ``2 * allocation.size``.
+
+    Raises:
+        KeyError: If ``allocation`` contains an order outside
+            ``{0, 2, 4, 6}``.
+    """
+    a = np.asarray(allocation, dtype=np.intp)
+    out = np.empty(2 * a.size, dtype=np.uint8)
+    for j, o in enumerate(a.tolist()):
+        v = _ALLOCATION_ORDER_TO_INDEX[int(o)]
+        out[2 * j] = (v >> 1) & 1
+        out[2 * j + 1] = v & 1
+    return out
+
+
+def unpack_allocation(bits: Bits) -> "npt.NDArray[np.intp]":
+    """Decode header bits back into a per-data-carrier allocation.
+
+    Inverse of :func:`pack_allocation`: every 2-bit (MSB-first) group is
+    decoded back to its bit-loading order in ``{0, 2, 4, 6}``.
+
+    Args:
+        bits: ``uint8``-like bit array whose length is a multiple of 2
+            (as produced by :func:`pack_allocation`).
+
+    Returns:
+        Integer (``intp``) array of per-data-carrier bit-loading orders,
+        one per 2-bit group in ``bits``.
+
+    Raises:
+        KeyError: If a decoded 2-bit index is outside ``{0, 1, 2, 3}``
+            (not possible for well-formed ``uint8`` 0/1 input).
+    """
+    b = np.asarray(bits, dtype=np.uint8).reshape(-1, 2)
+    vals = (b[:, 0].astype(np.intp) << 1) | b[:, 1].astype(np.intp)
+    return np.array([_ALLOCATION_INDEX_TO_ORDER[int(v)] for v in vals], dtype=np.intp)
+
+
+def modulate_ofdm_loaded(
+    payload_bits: Bits,
+    allocation: "npt.NDArray[np.intp]",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Complex:
+    """Build an adaptively bit-loaded OFDM burst.
+
+    Assembles STF + LTF + a fixed-QPSK header symbol (the packed
+    ``allocation``, see :func:`pack_allocation`) + one or more data symbols,
+    where each data symbol's carrier ``k`` carries ``allocation[k]`` bits via
+    :func:`core.bitloading.qam_map` (nulled, i.e. transmits 0, when
+    ``allocation[k] == 0``). ``payload_bits`` is zero-padded to a multiple of
+    ``sum(allocation)`` (the per-data-symbol bit capacity). Not
+    power-normalized (the synth modulator normalizes), matching
+    :func:`modulate_ofdm`.
+
+    Args:
+        payload_bits: ``uint8``-like bit array to carry in the data symbols.
+        allocation: 1-D integer array of per-data-carrier bit-loading
+            orders (one of ``{0, 2, 4, 6}`` each), with one entry per
+            ``profile.data_carriers``.
+        profile: OFDM PHY profile (subcarrier/CP layout) to build against.
+
+    Returns:
+        Complex128 IQ samples of the full burst; length is always a
+        multiple of ``profile.symbol_len``.
+
+    Raises:
+        ValueError: If ``allocation`` does not have exactly one entry per
+            data carrier in ``profile``.
+    """
+    alloc = np.asarray(allocation, dtype=np.intp)
+    nd = len(profile.data_carriers)
+    if alloc.size != nd:
+        raise ValueError("allocation must have one entry per data carrier")
+    bits_per_data_symbol = int(alloc.sum())
+    b = np.asarray(payload_bits, dtype=np.uint8)
+    parts = [
+        _symbol_time(profile, _stf_freq(profile)),
+        _symbol_time(profile, _ltf_freq(profile)[0]),
+        _data_symbol_time(profile, qpsk_map(pack_allocation(alloc))),  # header
+    ]
+    if bits_per_data_symbol > 0:
+        pad = (-b.size) % bits_per_data_symbol
+        if pad:
+            b = np.concatenate([b, np.zeros(pad, dtype=np.uint8)])
+        for start in range(0, b.size, bits_per_data_symbol):
+            chunk = b[start : start + bits_per_data_symbol]
+            data_syms = np.zeros(nd, dtype=np.complex128)
+            pos = 0
+            for k in range(nd):
+                o = int(alloc[k])
+                if o > 0:
+                    data_syms[k] = qam_map(chunk[pos : pos + o], o)[0]
+                    pos += o
+            parts.append(_data_symbol_time(profile, data_syms))
+    out: Complex = np.concatenate(parts).astype(np.complex128)
+    return out
+
+
+def demodulate_ofdm_loaded(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Bits:
+    """Recover payload bits from an adaptively bit-loaded OFDM burst.
+
+    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
+    LS channel estimation, and per-symbol one-tap equalization as
+    :func:`demodulate_ofdm` (via :func:`ofdm_equalized_symbols`). The first
+    equalized data symbol is the fixed-QPSK allocation header (see
+    :func:`pack_allocation`/:func:`unpack_allocation`); each subsequent
+    symbol's carriers are demapped per-carrier at their signaled
+    bit-loading order via :func:`core.bitloading.qam_demap`, skipping
+    nulled carriers (``allocation[k] == 0``).
+
+    Args:
+        rx: Complex baseband samples, expected to begin at or near the STF.
+        profile: OFDM PHY profile (subcarrier/CP layout) to demodulate
+            against; must match the profile used by
+            :func:`modulate_ofdm_loaded`.
+
+    Returns:
+        Unpacked ``uint8`` bit array of concatenated payload bits (empty if
+        the burst is shorter than the STF + LTF + header preamble, i.e. on
+        sync failure or too few equalized data-carrier symbols).
+
+    Note:
+        Like :func:`demodulate_ofdm`, this always returns its best-effort
+        decode; callers that cannot guarantee ``rx`` starts at or near the
+        STF should gate on :func:`ofdm_sync_confidence` first.
+    """
+    syms = ofdm_equalized_symbols(rx, profile)
+    nd = len(profile.data_carriers)
+    if syms.size < nd:  # need at least the header symbol
+        return np.zeros(0, dtype=np.uint8)
+    grid = syms.reshape(-1, nd)  # (n_symbols, 48) equalized data carriers
+    allocation = unpack_allocation(qpsk_demap(grid[0]))
+    out: "list[Bits]" = []
+    for row in grid[1:]:
+        for k in range(nd):
+            o = int(allocation[k])
+            if o > 0:
+                out.append(qam_demap(np.asarray([row[k]], dtype=np.complex128), o))
+    if not out:
+        return np.zeros(0, dtype=np.uint8)
+    result: Bits = np.concatenate(out).astype(np.uint8)
+    return result
+
+
+def data_channel_response(
+    multipath_taps: "Tuple[complex, ...]",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Complex:
+    """Channel frequency response at the data subcarriers from FIR taps.
+
+    Gives the transmitter "perfect CSI" (channel state information) for
+    adaptive bit-loading: ``H_k = FFT(taps, fft_size)[bin_k]`` evaluated at
+    each data subcarrier's FFT bin, matching the multipath model applied by
+    :func:`validation.synth.channel.apply_channel` (plain convolution with
+    ``multipath_taps``, no additional delay/phase reference). Combine with
+    :func:`core.bitloading.subcarrier_snr` and :func:`core.bitloading.chow_load`
+    to compute a per-carrier bit-loading allocation before calling
+    :func:`modulate_ofdm_loaded`.
+
+    Args:
+        multipath_taps: FIR channel impulse response (tap 0 = no delay).
+        profile: OFDM PHY profile (subcarrier/CP layout) whose data
+            subcarriers to evaluate the response at.
+
+    Returns:
+        Complex128 array of length ``len(profile.data_carriers)``, the
+        complex channel gain ``H_k`` at each data subcarrier, in the same
+        order as ``profile.data_carriers``.
+    """
+    n = profile.fft_size
+    taps = np.asarray(multipath_taps, dtype=np.complex128)
+    hf = np.fft.fft(taps, n)
+    out: Complex = hf[_bins(profile, profile.data_carriers)].astype(np.complex128)
     return out
