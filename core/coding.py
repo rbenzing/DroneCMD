@@ -15,6 +15,7 @@ from typing import Dict, List, Mapping, Protocol, Tuple, Union, cast
 import numpy as np
 import numpy.typing as npt
 
+from core import fountain as _fountain_mod
 from core import ldpc as _ldpc_mod
 from core import polar as _polar_mod
 from core import turbo as _turbo_mod
@@ -655,6 +656,63 @@ class _Polar:
         )
 
 
+class _Fountain:
+    """Raptor-style fountain codec (P3h). Hard-input; erasures via per-symbol
+    CRC-8; GF(2) Gaussian-elimination decode; internal 16-bit length header so
+    the exact frame length is recoverable for a rateless code."""
+
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        p = spec.params
+        self.S = int(p["symbol_bits"])  # type: ignore[call-overload]
+        self.seed = int(p.get("seed", 1))  # type: ignore[arg-type]
+        self.c = float(p.get("c", 0.03))  # type: ignore[arg-type]
+        self.delta = float(p.get("delta", 0.5))  # type: ignore[arg-type]
+        self.prate = float(p.get("precode_rate", 0.9))  # type: ignore[arg-type]
+        self.pdeg = int(p.get("precode_degree", 4))  # type: ignore[arg-type]
+        self.eps = float(p.get("overhead", 1.0))  # type: ignore[arg-type]
+
+    def _kw(self) -> dict:
+        return dict(
+            symbol_bits=self.S,
+            seed=self.seed,
+            c=self.c,
+            delta=self.delta,
+            precode_rate=self.prate,
+            precode_degree=self.pdeg,
+            overhead=self.eps,
+        )
+
+    def encode(self, info_bits: Bits) -> Bits:
+        frame = np.asarray(info_bits, dtype=np.uint8)
+        header = np.array(
+            [(frame.size >> (15 - i)) & 1 for i in range(16)], dtype=np.uint8
+        )
+        payload_bits = np.concatenate([header, frame]).astype(np.uint8)
+        return cast(Bits, _fountain_mod.fountain_encode(payload_bits, **self._kw()))
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        r = np.asarray(received)
+        if r.dtype.kind == "f":
+            bits = (cast(npt.NDArray[np.float64], r) < 0).astype(np.uint8)
+        else:
+            bits = cast(npt.NDArray[np.uint8], r).astype(np.uint8)
+        payload_bits, ok, n_erased = _fountain_mod.fountain_decode(bits, **self._kw())
+        if not ok or payload_bits.size < 16:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8),
+                meta={"decode_ok": False, "erasures": n_erased},
+            )
+        flen = 0
+        for i in range(16):
+            flen = (flen << 1) | int(payload_bits[i])
+        frame = payload_bits[16 : 16 + flen]
+        return DecodeResult(
+            bits=cast(Bits, frame.astype(np.uint8)),
+            meta={"decode_ok": bool(frame.size == flen), "erasures": n_erased},
+        )
+
+
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:
     """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
     coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
@@ -702,6 +760,8 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _Turbo(spec)
     if spec.family == CodeFamily.POLAR:
         return _Polar(spec)
+    if spec.family == CodeFamily.FOUNTAIN:
+        return _Fountain(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -876,12 +936,53 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         256,
         {"soft_input": True, "list_size": 8, "design_snr_db": 2.0, "rate": "2/3"},
     ),
-    "fountain_lt": CodingSpec(
-        "fountain_lt",
+    "fountain_r05": CodingSpec(
+        "fountain_r05",
         CodeFamily.FOUNTAIN,
         0,
         0,
-        {"kind": "lt", "c": 0.03, "delta": 0.5},
+        {
+            "kind": "raptor",
+            "c": 0.03,
+            "delta": 0.5,
+            "symbol_bits": 16,
+            "precode_rate": 0.95,
+            "precode_degree": 4,
+            "seed": 7,
+            "overhead": 0.5,
+        },
+    ),
+    "fountain_r10": CodingSpec(
+        "fountain_r10",
+        CodeFamily.FOUNTAIN,
+        0,
+        0,
+        {
+            "kind": "raptor",
+            "c": 0.03,
+            "delta": 0.5,
+            "symbol_bits": 16,
+            "precode_rate": 0.95,
+            "precode_degree": 4,
+            "seed": 7,
+            "overhead": 1.0,
+        },
+    ),
+    "fountain_r15": CodingSpec(
+        "fountain_r15",
+        CodeFamily.FOUNTAIN,
+        0,
+        0,
+        {
+            "kind": "raptor",
+            "c": 0.03,
+            "delta": 0.5,
+            "symbol_bits": 16,
+            "precode_rate": 0.95,
+            "precode_degree": 4,
+            "seed": 7,
+            "overhead": 1.5,
+        },
     ),
 }
 

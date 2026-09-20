@@ -15,4 +15,5 @@ Numbered, committed design specs for the DroneCMD signal/coding stack. Each reco
 | 0009 | P3d | [P3d BCH](0009-p3d-bch.md) | Accepted (v0.3.0) |
 | 0010 | P3e | [P3e 802.11n-style LDPC](0010-p3e-ldpc.md) | Accepted (v0.4.0) |
 | 0011 | P3f | [P3f LTE-style turbo](0011-p3f-turbo.md) | Accepted (v0.4.0) |
-| 0012 | P3g | [P3g Arıkan polar + CA-SCL](0012-p3g-polar.md) | Accepted (implemented, unreleased) |
+| 0012 | P3g | [P3g Arıkan polar + CA-SCL](0012-p3g-polar.md) | Accepted (v0.5.0) |
+| 0013 | P3h | [P3h Raptor-style fountain](0013-p3h-fountain.md) | Accepted (implemented, unreleased) |

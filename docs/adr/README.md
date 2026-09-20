@@ -34,3 +34,4 @@ them.
 | [0014](0014-turbo-max-log-map.md) | Turbo decoder — max-log-MAP + extrinsic scaling (scale-invariant) | Accepted |
 | [0015](0015-soft-demod-phase-ramp-fix.md) | Soft-demod phase-ramp fix — DD payload tracking + L&R CFO estimator | Accepted |
 | [0016](0016-polar-ca-scl.md) | Polar decoder — CA-SCL, min-sum f-node (scale-invariant) | Accepted |
+| [0017](0017-fountain-raptor-erasure.md) | Fountain — Raptor-style precode + Robust-Soliton LT, per-symbol-CRC erasure, GF(2)-GE decode | Accepted |

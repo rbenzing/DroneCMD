@@ -357,6 +357,60 @@ def test_turbo_beats_uncoded_end_to_end_soft_demod() -> None:
     assert tur < unc  # end-to-end coding gain through the (fixed) soft demod
 
 
+def test_fountain_recovers_payload_where_uncoded_fails() -> None:
+    """Fountain (r15) FULL-PAYLOAD RECOVERY beats uncoded end-to-end (FER metric).
+
+    Unlike every other codec in this module, fountain is an **erasure** code,
+    not an error-corrector: the metric is FER (payload recovered or not via
+    per-symbol-CRC erasure detection + GF(2) solve + outer CRC), not BER.
+    Mirrors ``test_bch_beats_uncoded_low_snr``'s harness shape through the
+    HARD demod branch (``sc_demodulate_psk``, not ``sc_soft_bits``) since
+    fountain is hard-input (``CODING_CATALOG["fountain_r15"].soft_input`` is
+    not True -- erasures come from the per-symbol CRC-8, not an LLR).
+    Payload is 48 bytes (384 payload bits + 16-bit internal length header +
+    16-bit outer CRC = 416 bits -> K=26 source symbols at symbol_bits=16) to
+    give fountain's precode an adequate K; a tiny payload would sit in LT's
+    small-K error floor even with the precode. 3.0 dB / 30 trials (measured)
+    is the operating point where the per-symbol erasure rate is moderate
+    enough that fountain_r15's fixed 2.5x overhead (N=ceil(2.5*K)) plus
+    precode consistently full-rank-solves the GF(2) system while the
+    uncoded frame's raw BER already exceeds what a bare CRC-16 catches
+    (0/30 clean uncoded recoveries vs a large majority for fountain),
+    keeping the targeted run well under 30 s (~4 s measured; GF(2)
+    Gauss-Jordan at L=27 is cheap).
+    """
+    payload = bytes(range(48))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 3.0, 30
+    prof = SCProfile(sps=8)
+    fspec = CODING_CATALOG["fountain_r15"]
+    f_ok = u_ok = 0
+    for s in range(trials):
+        g = rng(s)
+        # uncoded
+        u = modulate(payload, ModScheme.BPSK, sps=8).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        u_ok += int(
+            ub[: pbits.size].size == pbits.size
+            and np.array_equal(ub[: pbits.size], pbits)
+        )
+        # fountain_r15 (hard-input: per-symbol-CRC erasures + GF(2) solve)
+        c = modulate(payload, ModScheme.BPSK, sps=8, coding=fspec).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cb = sc_demodulate_psk(
+            cn.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        frame = make_codec(fspec).decode(deinterleave(cb, CODING_INTERLEAVE_DEPTH)).bits
+        rp, ok = check_and_strip_crc(frame)
+        f_ok += int(
+            ok and rp.size >= pbits.size and np.array_equal(rp[: pbits.size], pbits)
+        )
+    assert f_ok > u_ok  # fountain recovers more payloads than uncoded (FER)
+
+
 def test_polar_beats_uncoded_low_snr() -> None:
     """CA-SCL polar(256,128) BER < uncoded BER end-to-end through the fixed soft demod.
 
