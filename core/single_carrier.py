@@ -31,6 +31,7 @@ from typing import Tuple
 import numpy as np
 import numpy.typing as npt
 from scipy.ndimage import gaussian_filter1d
+from scipy.signal import fftconvolve
 
 Complex = npt.NDArray[np.complex128]
 Real = npt.NDArray[np.float64]
@@ -200,13 +201,20 @@ def sc_frame_sync(
     n_positions = min(signal.size - length + 1, search_span)
     if n_positions <= 0:
         return 0, complex(0.0, 0.0)
-    correlations: Complex = np.empty(n_positions, dtype=np.complex128)
-    for d in range(n_positions):
-        window = signal[d : d + length]
-        window_norm = float(np.linalg.norm(window))
-        correlations[d] = np.sum(window * np.conj(ref)) / (
-            window_norm * ref_norm + 1e-12
-        )
+    # Vectorized equivalent of the per-offset normalized matched filter:
+    #   numerator[d] = sum_k signal[d+k] * conj(ref[k])
+    # is the sliding dot product of ``signal`` with ``ref``, i.e. the
+    # convolution of ``signal`` with the reversed conjugate reference; the FFT
+    # makes it O(N log N) instead of the O(n_positions * L) Python loop. The
+    # per-window energies ||signal[d:d+L]|| come from a prefix sum of |signal|^2
+    # in O(N). Result is identical to the loop up to FFT round-off.
+    full = fftconvolve(signal, np.conj(ref)[::-1])
+    numerator = full[length - 1 : length - 1 + n_positions]
+    power = np.abs(signal) ** 2
+    prefix = np.concatenate(([0.0], np.cumsum(power)))
+    window_energy = prefix[length : length + n_positions] - prefix[:n_positions]
+    window_norm = np.sqrt(window_energy)
+    correlations: Complex = numerator / (window_norm * ref_norm + 1e-12)
     best = int(np.argmax(np.abs(correlations)))
     peak = complex(correlations[best])
     return best, peak

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from core.blind import resolve_sc_profile
 from core.profiles import SC_CATALOG
@@ -89,6 +90,7 @@ def test_aligned_centers_separate_bpsk_qpsk() -> None:
     assert qpsk_ratio > 0.7
 
 
+@pytest.mark.slow  # ~100 blind resolves across a 5-point SNR sweep
 def test_bpsk_not_confused_as_qpsk_at_normal_snr() -> None:
     # Regression pin for QPSK_QRAIL_THRESHOLD (whole-branch review, BLOCKING):
     # a BPSK burst mis-resolved to qpsk_link returns SILENT wrong bits. The
@@ -116,6 +118,7 @@ def test_bpsk_not_confused_as_qpsk_at_normal_snr() -> None:
         assert confusions == 0, f"BPSK->QPSK at {snr} dB: {confusions}/20"
 
 
+@pytest.mark.slow  # ~80 blind resolves across a 4-point SNR sweep
 def test_qpsk_not_confused_as_bpsk_across_snr() -> None:
     # The asymmetric fix must not cost QPSK: qpsk_link never resolves to psk_c2.
     from core.blind import resolve_sc_profile
@@ -133,6 +136,7 @@ def test_qpsk_not_confused_as_bpsk_across_snr() -> None:
                 assert spec.name != "psk_c2", f"QPSK->BPSK at {snr} dB seed {seed}"
 
 
+@pytest.mark.slow  # ~280 blind resolves (2 SNRs x 14 profiles x 10 seeds)
 def test_profile_id_accuracy_degrades_gracefully() -> None:
     # Characterize blind profile-ID across SNR (the spec's "characterized
     # across SNR" -- the coverage gap the whole-branch review flagged).
