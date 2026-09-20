@@ -10,7 +10,6 @@ zero (used for shorten-from-the-end rate matching; see design 0012).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple
 
 import numpy as np
 import numpy.typing as npt

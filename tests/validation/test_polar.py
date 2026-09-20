@@ -14,7 +14,7 @@ def test_polar_transform_matches_dense_gn() -> None:
 
     rng = np.random.default_rng(0)
     for m in (1, 2, 3, 8):
-        n = 2 ** m
+        n = 2**m
         G = _dense_gn(m)
         for _ in range(5):
             u = rng.integers(0, 2, size=n).astype(np.uint8)
@@ -30,6 +30,6 @@ def test_polar_transform_lower_triangular_tail() -> None:
     rng = np.random.default_rng(1)
     for s in (1, 8, 40):
         u = rng.integers(0, 2, size=n).astype(np.uint8)
-        u[n - s:] = 0
+        u[n - s :] = 0
         x = polar_transform(u)
-        assert np.all(x[n - s:] == 0)
+        assert np.all(x[n - s :] == 0)
