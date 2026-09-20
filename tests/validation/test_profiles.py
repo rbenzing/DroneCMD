@@ -210,11 +210,11 @@ def test_polar_bpsk_profile_present_and_unique_sps() -> None:
     from core.profiles import SC_CATALOG, coding_of
 
     p = SC_CATALOG["polar_bpsk"]
-    assert p.profile.sps == 1024
+    assert p.profile.sps == 48
     assert coding_of("polar_bpsk") == "polar_256_128"
     spsset = [
         s.profile.sps
         for k, s in SC_CATALOG.items()
         if not s.is_fsk and getattr(s, "profile", None)
     ]
-    assert spsset.count(1024) == 1  # unique
+    assert spsset.count(48) == 1  # unique

@@ -382,6 +382,6 @@ def test_polar_bpsk_blind_resolves() -> None:
     from validation.synth.modulators import modulate
     from validation.types import ModScheme
 
-    iq = modulate(bytes(range(8)), ModScheme.BPSK, sps=1024).astype(np.complex128)
+    iq = modulate(bytes(range(8)), ModScheme.BPSK, sps=48).astype(np.complex128)
     spec, _ = resolve_sc_profile(iq)
     assert spec is not None and spec.name == "polar_bpsk"
