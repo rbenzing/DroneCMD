@@ -140,3 +140,81 @@ def build_precode(
         deg = max(1, min(precode_degree, k))
         rows.append(np.sort(rng.choice(k, size=deg, replace=False)).astype(np.intp))
     return rows
+
+
+def _to_symbols(payload_bits: Bits, symbol_bits: int) -> Bits:
+    """Convert a flat payload bit array into symbols (rows of S bits each).
+
+    Zero-pads the payload to a multiple of symbol_bits, then reshapes to a
+    2D array of shape (K, S) where K = ceil(len(payload_bits) / S).
+
+    Args:
+        payload_bits: Flat bit array (uint8 with values 0 or 1).
+        symbol_bits: Number of bits per symbol (S).
+
+    Returns:
+        2D array of shape (K, S) containing the symbolized payload.
+    """
+    n = payload_bits.size
+    k = int(np.ceil(n / symbol_bits))
+    padded = np.zeros(k * symbol_bits, dtype=np.uint8)
+    padded[:n] = payload_bits
+    return padded.reshape(k, symbol_bits)
+
+
+def fountain_encode(
+    payload_bits: Bits,
+    *,
+    symbol_bits: int,
+    seed: int,
+    c: float,
+    delta: float,
+    precode_rate: float,
+    precode_degree: int,
+    overhead: float,
+) -> Bits:
+    """LT-encode payload bits using a Robust-Soliton code with systematic precode.
+
+    Converts payload to K source symbols of S bits each, builds R precode parity
+    symbols (XOR of source neighbors), constructs L=K+R intermediate symbols,
+    then generates N=ceil((1+overhead)*K) output symbols via Robust-Soliton
+    degree sampling and XOR combination, appending per-symbol CRC-8.
+
+    Args:
+        payload_bits: Flat bit array (uint8 with values 0 or 1).
+        symbol_bits: Number of bits per symbol (S).
+        seed: Base seed for deterministic RNG (seeded per output symbol).
+        c: Robust Soliton ripple-size constant.
+        delta: Robust Soliton target failure probability.
+        precode_rate: Code rate for the systematic precode (must be < 1.0).
+        precode_degree: Maximum degree per precode parity row.
+        overhead: Relative overhead for N vs K (N = ceil((1 + overhead) * K)).
+
+    Returns:
+        Flat bit array of size N * (S + 8) containing N encoded symbols,
+        each with S data bits and 8 CRC bits.
+    """
+    src = _to_symbols(np.asarray(payload_bits, dtype=np.uint8), symbol_bits)  # (K,S)
+    k = src.shape[0]
+    parity_rows = build_precode(k, seed, precode_rate, precode_degree)
+    parity = (
+        np.array(
+            [np.bitwise_xor.reduce(src[row], axis=0) for row in parity_rows],
+            dtype=np.uint8,
+        ).reshape(-1, symbol_bits)
+        if parity_rows
+        else np.zeros((0, symbol_bits), dtype=np.uint8)
+    )
+    inter = np.concatenate([src, parity], axis=0)  # (L,S), L=K+R
+    L = inter.shape[0]
+    n_out = int(np.ceil((1.0 + overhead) * k))
+    pmf = robust_soliton(L, c, delta)
+    out = np.empty((n_out, symbol_bits + 8), dtype=np.uint8)
+    for i in range(n_out):
+        rng = np.random.default_rng((seed + i) & 0xFFFFFFFF)
+        deg = sample_degree(pmf, rng)
+        nbrs = symbol_neighbors(rng, deg, L)
+        enc = np.bitwise_xor.reduce(inter[nbrs], axis=0).astype(np.uint8)
+        out[i, :symbol_bits] = enc
+        out[i, symbol_bits:] = crc8(enc)
+    return out.reshape(-1)
