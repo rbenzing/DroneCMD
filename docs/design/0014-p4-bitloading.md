@@ -96,19 +96,25 @@ blind-resolvable link profile.
   for each **data** subcarrier (`h_freq` = channel frequency response at the data
   bins; `noise_var` the per-subcarrier noise variance). Returns linear SNR array.
 
-### 2c. Chow's rate-adaptive loading
-- `chow_load(snr, target_ber, allowed_orders=(0,2,4,6), max_iter=...) ->
-  allocation`: the classic Chow–Cioffi–Bingham algorithm.
-  - SNR gap `Γ` from the target BER for QAM: `Γ = (1/3)·(erfcinv(target_ber/2))^2·2`
-    (the standard gap approximation; pinned in implementation).
-  - Tentative bits per carrier `b_k = log2(1 + snr_k / (Γ·10^(margin/10)))`;
-    round to the nearest **allowed** even order (0/2/4/6), clamped to 6.
-  - Iterate: count used carriers, recompute the system margin so the rounding is
-    consistent, drop the weakest carriers to 0 when they cannot support order 2 at
-    the target BER. Rate-adaptive: no fixed total-rate target — maximize Σ b_k
-    subject to each used carrier meeting the target BER.
+### 2c. Chow-style rate-adaptive loading
+- `chow_load(snr, target_ber, allowed_orders=(0,2,4,6)) -> allocation`: a
+  single-pass rate-adaptive integer assignment (the practical core of Chow's
+  rate-adaptive form — a direct feasibility threshold, no margin iteration).
+  - SNR gap `Γ` from the target BER via `_snr_gap(target_ber) =
+    (1/3)·[Q^{-1}(target_ber/4)]^2` with `Q^{-1}(x) = √2·erfcinv(2x)` (the
+    standard QAM gap approximation; the algebraically-equivalent
+    `(1/3)(erfcinv(BER/2))²·2` grouping is the same value). Pinned in the code.
+  - Assign each carrier the **largest allowed order `o` whose feasibility SNR
+    `Γ·(2^o − 1)` ≤ `snr_k`** (so every used carrier meets the target BER);
+    carriers that cannot support the smallest positive order (2) are nulled (0).
+    This maximizes Σ b_k subject to the per-carrier target BER, in one pass.
   - Returns an `int` array of length `len(data_carriers)`, entries in {0,2,4,6}.
-- Deterministic given `(snr, target_ber)`.
+    Deterministic given `(snr, target_ber)`.
+
+  *(As-implemented note: an earlier draft of this section described a fuller
+  iterative-margin Chow–Cioffi–Bingham loop; the shipped `chow_load` is the
+  simpler single-pass feasibility assignment above, which the throughput
+  demonstration validates. ADR-0018 records the implemented form.)*
 
 ## 3. `core/ofdm.py` extensions
 
