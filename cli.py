@@ -525,7 +525,7 @@ async def cmd_capture(args: argparse.Namespace, config: ConfigManager, output: C
             'platform': args.platform,
             'gain_mode': args.gain,
             'samples_captured': len(samples),
-            'signal_power_dbfs': metadata.signal_power_dbfs,
+            'signal_power_dbfs': metadata.signal_level_dbfs,
             'snr_db': metadata.snr_db
         }
         
@@ -542,7 +542,7 @@ async def cmd_capture(args: argparse.Namespace, config: ConfigManager, output: C
             'samples_captured': len(samples),
             'file_size_bytes': Path(args.output).stat().st_size,
             'signal_quality': {
-                'power_dbfs': metadata.signal_power_dbfs,
+                'power_dbfs': metadata.signal_level_dbfs,
                 'snr_db': metadata.snr_db,
                 'sample_loss_rate': metadata.sample_loss_rate
             }
