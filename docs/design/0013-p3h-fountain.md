@@ -4,7 +4,7 @@
 **Phase:** P3h
 
 **Date:** 2026-09-20
-**Status:** Accepted — awaiting implementation (unreleased).
+**Status:** Accepted — implemented (unreleased).
 **Author:** rbenzing (with Claude)
 **Program:** P3 (channel coding), sub-phase **P3h** — the final codec family: a
 Raptor-style fountain (rateless erasure) code. Completes the seven-family
@@ -24,9 +24,12 @@ authorized testing only.
 Implement a **Raptor-style fountain code** — an outer **systematic sparse
 precode** plus an inner **LT (Luby Transform) code** with a **Robust Soliton**
 degree distribution — decoded over an **erasure channel** by **GF(2) Gaussian
-elimination**, on the P3a `Codec` framework. The framework already carries the
-`fountain_lt` descriptor (`k=0, n=0` rateless; `{kind:"lt", c:0.03, delta:0.5}`)
-and `CodeFamily.FOUNTAIN`; `make_codec` raises for `FOUNTAIN` today.
+elimination**, on the P3a `Codec` framework. Before this sub-phase, the
+framework carried only a placeholder `fountain_lt` descriptor (`k=0, n=0`
+rateless; `{kind:"lt", c:0.03, delta:0.5}`) and `CodeFamily.FOUNTAIN`, with
+`make_codec` raising for `FOUNTAIN`. As implemented (see §4), `fountain_lt`
+is replaced by the `fountain_r05`/`fountain_r10`/`fountain_r15` overhead
+profiles and `make_codec` builds `FOUNTAIN` like every other family.
 
 ### The conceptual shift from every prior codec
 
@@ -164,7 +167,9 @@ soft codecs; consistent with BCH being hard-input). Records as **ADR-0017**.
   - `fountain_r05` (ε=0.5), `fountain_r10` (ε=1.0), `fountain_r15` (ε=1.5),
     each `CodingSpec(name, FOUNTAIN, 0, 0, {kind:"raptor", c:0.03, delta:0.5,
     symbol_bits:S, crc_sym_bits:C, precode_rate:P, seed:SD, overhead:ε})`
-    (`k=0, n=0` rateless). S/C/P/SD pinned in implementation.
+    (`k=0, n=0` rateless). S/C/P/SD pinned in implementation:
+    `symbol_bits=16`, `crc_sym_bits=8`, `precode_rate=0.95`,
+    `precode_degree=4`, `seed=7` (shared across all three ε profiles).
 - **Profile** (`core/profiles.py`): `fountain_bpsk = SCProfileSpec(
   "fountain_bpsk", SCMod.BPSK, SCProfile(sps=<U>), coding="fountain_r10")` where
   `<U>` is a **small unique** sps (not in {4,8,16,32,48,64,128,256,512}; e.g.

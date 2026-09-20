@@ -156,7 +156,7 @@ classify the resulting bytes.
 
 **Module map:**
 
-- `core/` — Signal pipeline: `capture`, `demodulation`, `classification`, `fhss`, `signal_processing`, `replay`, `parsing`; OFDM & single-carrier receivers (`ofdm`, `single_carrier`); link-profile catalog + blind resolution (`profiles`, `blind`); channel coding (`coding` — convolutional/RS/BCH/LDPC/turbo/polar codecs, `galois` — the reusable GF(2^m) algebra for Reed-Solomon/BCH, `polar` — Arıkan polar transform + GA frozen set + CA-SCL decoder)
+- `core/` — Signal pipeline: `capture`, `demodulation`, `classification`, `fhss`, `signal_processing`, `replay`, `parsing`; OFDM & single-carrier receivers (`ofdm`, `single_carrier`); link-profile catalog + blind resolution (`profiles`, `blind`); channel coding (`coding` — uncoded/repetition/convolutional/RS/BCH/LDPC/turbo/polar/fountain codecs — the full seven-family FEC sheet is now complete, `galois` — the reusable GF(2^m) algebra for Reed-Solomon/BCH, `polar` — Arıkan polar transform + GA frozen set + CA-SCL decoder, `fountain` — Raptor-style precode + Robust-Soliton LT + GF(2) Gaussian-elimination erasure decoder)
 - `capture/` — Simple layer: `manager`, `detector`, `sniffer`
 - `injector/` — Packet injection engine with FCC compliance enforcement
 - `plugins/` — Protocol plugin system: `base`, `registry`, `protocols/` (DJI, Parrot, generic)
