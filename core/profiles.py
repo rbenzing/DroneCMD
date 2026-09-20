@@ -130,6 +130,11 @@ SC_CATALOG: Dict[str, SCProfileSpec] = {
     "turbo_bpsk": SCProfileSpec(
         "turbo_bpsk", SCMod.BPSK, SCProfile(sps=512), coding="turbo_r13"
     ),
+    # PHY-distinct coded profile (P3g): sps=48 is unique among SC_CATALOG
+    # entries, so blind resolution separates it by acquisition sps.
+    "polar_bpsk": SCProfileSpec(
+        "polar_bpsk", SCMod.BPSK, SCProfile(sps=48), coding="polar_256_128"
+    ),
 }
 
 

@@ -30,6 +30,7 @@ def test_make_codec_unimplemented_families_raise() -> None:
             CodeFamily.BCH,
             CodeFamily.LDPC,
             CodeFamily.TURBO,
+            CodeFamily.POLAR,
         ):
             make_codec(spec)  # builds
         else:
@@ -549,3 +550,109 @@ def test_make_codec_unimplemented_families_raise_turbo() -> None:
 
     make_codec(CODING_CATALOG["turbo_r13"])  # must not raise
     make_codec(CODING_CATALOG["turbo_r12"])  # must not raise
+
+
+def test_make_codec_unimplemented_families_raise_polar() -> None:
+    # POLAR now builds; ensure the enumerating test's builds-set includes it.
+    from core.coding import CODING_CATALOG, CodeFamily, make_codec
+
+    for spec in CODING_CATALOG.values():
+        if spec.family == CodeFamily.POLAR:
+            make_codec(spec)  # must not raise
+
+
+def test_polar_roundtrip_all_rates_with_shortening() -> None:
+    import numpy as np
+
+    from core.coding import (
+        CODING_CATALOG,
+        check_and_strip_crc,
+        frame_with_crc,
+        make_codec,
+    )
+
+    for name in ("polar_256_128", "polar_256_85", "polar_256_170"):
+        spec = CODING_CATALOG[name]
+        codec = make_codec(spec)
+        cap = (spec.k - 16) // 8
+        for nbytes in (1, cap // 2 or 1, cap):
+            payload = bytes(range(nbytes))
+            pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+            frame = frame_with_crc(pbits.astype(np.uint8))
+            coded = codec.encode(frame)
+            llr = (1.0 - 2.0 * coded.astype(np.float64)) * 8.0
+            out = codec.decode(llr)
+            rp, ok = check_and_strip_crc(out.bits)
+            assert ok and np.array_equal(rp[: pbits.size], pbits)
+
+
+def test_polar_full_rate_l_equals_k_all_rates() -> None:
+    """L=K (no shortening) round-trips for each rate: 85/128/170.
+
+    ``build_shortened_mask(code, K)`` should reduce to exactly ``code.frozen_mask``
+    (the shortening tail is empty at L=K), and ``polar_encode``/``scl_decode``
+    should round-trip a K-bit info vector directly at that mask. Since payloads
+    are byte-aligned (frame = 8*nbytes + 16 CRC bits), an exact L=K frame is not
+    generally byte-aligned, so this exercises ``core.polar`` directly with a
+    K-bit info array rather than going through the byte/CRC-framed codec API
+    (whose own CRC-aided path selection expects a CRC-framed payload). The
+    ``crc_check`` callback is stubbed to always pass, isolating this test to the
+    encode/decode/mask correctness at L=K.
+    """
+    import numpy as np
+
+    from core.coding import CODING_CATALOG
+    from core.polar import build_code, build_shortened_mask, polar_encode, scl_decode
+
+    for name, k in (
+        ("polar_256_85", 85),
+        ("polar_256_128", 128),
+        ("polar_256_170", 170),
+    ):
+        spec = CODING_CATALOG[name]
+        assert spec.k == k
+        dsnr = float(spec.params["design_snr_db"])  # type: ignore[arg-type]
+        code = build_code(spec.n, k, dsnr)
+        mask = build_shortened_mask(code, k)
+        assert np.array_equal(mask, code.frozen_mask)  # no shortening tail at L=K
+
+        rng = np.random.default_rng(0)
+        info = rng.integers(0, 2, size=k).astype(np.uint8)
+        cw = polar_encode(info, mask)
+        assert cw.size == spec.n
+        llr = (1.0 - 2.0 * cw.astype(np.float64)) * 8.0  # clean channel
+        decoded, passed = scl_decode(
+            llr, mask, int(spec.params["list_size"]), lambda bits: True  # type: ignore[arg-type]
+        )
+        assert passed
+        assert np.array_equal(decoded, info)
+
+
+def test_polar_loud_fail_on_garbage() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, check_and_strip_crc, make_codec
+
+    codec = make_codec(CODING_CATALOG["polar_256_128"])
+    rng = np.random.default_rng(9)
+    llr = rng.standard_normal(256) * 0.1  # near-zero info -> should not pass CRC
+    out = codec.decode(llr)
+    _, ok = check_and_strip_crc(out.bits)
+    assert not ok and out.meta["decode_ok"] is False
+
+
+def test_polar_scale_invariance() -> None:
+    import numpy as np
+
+    from core.coding import CODING_CATALOG, frame_with_crc, make_codec
+
+    codec = make_codec(CODING_CATALOG["polar_256_128"])
+    payload = bytes(range(12))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    coded = codec.encode(frame_with_crc(pbits.astype(np.uint8)))
+    base = (1.0 - 2.0 * coded.astype(np.float64)) + 0.3 * np.random.default_rng(
+        1
+    ).standard_normal(coded.size)
+    ref = codec.decode(base).bits
+    for k in (1e-3, 1e-1, 1e1, 1e3):
+        np.testing.assert_array_equal(codec.decode(k * base).bits, ref)

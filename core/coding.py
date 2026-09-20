@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from core import ldpc as _ldpc_mod
+from core import polar as _polar_mod
 from core import turbo as _turbo_mod
 from core.galois import GF256, GF2m, berlekamp_massey, chien_search
 
@@ -598,6 +599,62 @@ class _Turbo:
         return DecodeResult(bits=cast(Bits, bits), meta={"decode_ok": True})
 
 
+class _Polar:
+    """n=256 Arıkan polar codec, CRC-aided SCL (P3g).
+
+    Single-block per frame; shorten-from-the-end conveys the frame length
+    (transmit M = (n-K)+L bits, drop the known-0 tail; reinsert +1e6 at
+    decode). CA-SCL reuses the framework CRC-16 for list selection.
+    """
+
+    def __init__(self, spec: CodingSpec) -> None:
+        self.spec = spec
+        self.n = int(spec.n)
+        self.K = int(spec.k)
+        self.list_size = int(spec.params.get("list_size", 8))  # type: ignore[arg-type]
+        dsnr = float(spec.params.get("design_snr_db", 2.0))  # type: ignore[arg-type]
+        self.code = _polar_mod.build_code(self.n, self.K, dsnr)
+
+    def encode(self, info_bits: Bits) -> Bits:
+        info = np.asarray(info_bits, dtype=np.uint8)
+        L = int(info.size)
+        if L > self.K:
+            raise ValueError("payload exceeds polar block k")
+        mask = _polar_mod.build_shortened_mask(self.code, L)
+        cw = _polar_mod.polar_encode(info, mask)
+        s = self.K - L
+        out = cw[: self.n - s]  # drop the known-0 tail
+        return cast(Bits, out.astype(np.uint8))
+
+    def decode(self, received: SoftOrHard) -> DecodeResult:
+        r = np.asarray(received)
+        llr_in = (
+            r.astype(np.float64)
+            if r.dtype.kind == "f"
+            else (1.0 - 2.0 * r.astype(np.float64)) * 8.0
+        )
+        L = int(llr_in.size) - (self.n - self.K)
+        if L <= 0 or L > self.K:
+            return DecodeResult(
+                bits=np.zeros(0, dtype=np.uint8), meta={"decode_ok": False}
+            )
+        s = self.K - L
+        full = np.empty(self.n, dtype=np.float64)
+        full[: self.n - s] = llr_in
+        full[self.n - s :] = 1e6  # known-0 shortening tail
+        mask = _polar_mod.build_shortened_mask(self.code, L)
+
+        def crc_ok(bits: Bits) -> bool:
+            if bits.size < 16:
+                return False
+            return bool(np.array_equal(bits[-16:], crc16_ccitt(bits[:-16])))
+
+        info, passed = _polar_mod.scl_decode(full, mask, self.list_size, crc_ok)
+        return DecodeResult(
+            bits=cast(Bits, info[:L].astype(np.uint8)), meta={"decode_ok": bool(passed)}
+        )
+
+
 def _bch_min_poly(field: GF2m, i: int) -> List[int]:
     """Minimal polynomial of alpha^i over GF(2): product over the cyclotomic
     coset {i*2^s mod n} of (x - alpha^j). Binary coefficients, highest-first."""
@@ -643,6 +700,8 @@ def make_codec(spec: CodingSpec) -> Codec:
         return _LDPC(spec)
     if spec.family == CodeFamily.TURBO:
         return _Turbo(spec)
+    if spec.family == CodeFamily.POLAR:
+        return _Polar(spec)
     raise NotImplementedError(
         f"{spec.family.value}: implemented in a later P3 sub-phase"
     )
@@ -801,7 +860,21 @@ CODING_CATALOG: Dict[str, CodingSpec] = {
         CodeFamily.POLAR,
         128,
         256,
-        {"soft_input": True, "list_size": 8},
+        {"soft_input": True, "list_size": 8, "design_snr_db": 2.0, "rate": "1/2"},
+    ),
+    "polar_256_85": CodingSpec(
+        "polar_256_85",
+        CodeFamily.POLAR,
+        85,
+        256,
+        {"soft_input": True, "list_size": 8, "design_snr_db": 2.0, "rate": "1/3"},
+    ),
+    "polar_256_170": CodingSpec(
+        "polar_256_170",
+        CodeFamily.POLAR,
+        170,
+        256,
+        {"soft_input": True, "list_size": 8, "design_snr_db": 2.0, "rate": "2/3"},
     ),
     "fountain_lt": CodingSpec(
         "fountain_lt",

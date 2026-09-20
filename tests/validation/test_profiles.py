@@ -25,6 +25,7 @@ def test_catalog_has_expected_entries() -> None:
         "bch_bpsk",
         "ldpc_bpsk",
         "turbo_bpsk",
+        "polar_bpsk",
     }
     assert "wifi_20" in OFDM_CATALOG
 
@@ -203,3 +204,17 @@ def test_turbo_bpsk_profile() -> None:
     assert SC_CATALOG["turbo_bpsk"].profile.sps == 512
     # sps=512 must be unique in SC_CATALOG (blind resolution key)
     assert [p.profile.sps for p in SC_CATALOG.values() if p.profile.sps == 512] == [512]
+
+
+def test_polar_bpsk_profile_present_and_unique_sps() -> None:
+    from core.profiles import SC_CATALOG, coding_of
+
+    p = SC_CATALOG["polar_bpsk"]
+    assert p.profile.sps == 48
+    assert coding_of("polar_bpsk") == "polar_256_128"
+    spsset = [
+        s.profile.sps
+        for k, s in SC_CATALOG.items()
+        if not s.is_fsk and getattr(s, "profile", None)
+    ]
+    assert spsset.count(48) == 1  # unique

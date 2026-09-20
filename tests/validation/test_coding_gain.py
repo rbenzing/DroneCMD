@@ -355,3 +355,48 @@ def test_turbo_beats_uncoded_end_to_end_soft_demod() -> None:
         rp, _ = check_and_strip_crc(cframe)
         tur += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
     assert tur < unc  # end-to-end coding gain through the (fixed) soft demod
+
+
+def test_polar_beats_uncoded_low_snr() -> None:
+    """CA-SCL polar(256,128) BER < uncoded BER end-to-end through the fixed soft demod.
+
+    Mirrors ``test_turbo_beats_uncoded_end_to_end_soft_demod``'s harness shape
+    (same sps=8, same synth -> AWGN -> ``sc_soft_bits`` -> soft-decode -> CRC
+    chain), swapped to ``polar_256_128``. Payload is 14 bytes ((128-16)/8=14,
+    a near-full rate-1/2 block) to avoid the shortening waterfall, per the
+    LDPC/turbo lesson (design 0012 Sec 6 item 7). 6.0 dB / 8 trials (measured,
+    same operating point turbo uses through the same fixed demod) lands polar
+    at 0 residual errors while uncoded still errs, keeping the run well under
+    30 s (pure-Python CA-SCL, list=8, n=256 is the slow part).
+    """
+    from core.coding import CODING_CATALOG, CODING_INTERLEAVE_DEPTH
+    from core.single_carrier import SCProfile, sc_demodulate_psk, sc_soft_bits
+
+    payload = bytes(range(14))
+    pbits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+    snr, trials = 6.0, 8
+    unc = pol = 0
+    prof = SCProfile(sps=8)
+    for s in range(trials):
+        g = rng(s)
+        # uncoded reference through the hard demod
+        u = modulate(payload, ModScheme.BPSK, sps=8).astype(np.complex128)
+        un, _, _ = add_awgn_at_snr(u, snr, g)
+        ub = sc_demodulate_psk(
+            un.astype(np.complex128), prof, bits_per_symbol=1, differential=False
+        )
+        unc += int(np.sum(ub[: pbits.size] != pbits))
+        # polar_256_128 through the soft demod (sc_soft_bits) + CA-SCL decode
+        c = modulate(
+            payload, ModScheme.BPSK, sps=8, coding=CODING_CATALOG["polar_256_128"]
+        ).astype(np.complex128)
+        cn, _, _ = add_awgn_at_snr(c, snr, g)
+        cl = sc_soft_bits(cn.astype(np.complex128), prof, bits_per_symbol=1)
+        cframe = (
+            make_codec(CODING_CATALOG["polar_256_128"])
+            .decode(deinterleave(cl, CODING_INTERLEAVE_DEPTH))
+            .bits
+        )
+        rp, _ = check_and_strip_crc(cframe)
+        pol += int(np.sum(rp[: pbits.size] != pbits[: rp.size]))
+    assert pol < unc  # end-to-end coding gain through the (fixed) soft demod
