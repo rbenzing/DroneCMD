@@ -141,8 +141,9 @@ soft codecs; consistent with BCH being hard-input). Records as **ADR-0017**.
 
 ## 3. `_Fountain` codec (in `core/coding.py`)
 
-- `__init__(spec)`: read `symbol_bits` (S), `crc_sym_bits`, `c`, `delta`,
-  `seed`, `precode_rate`, `overhead` (ε).
+- `__init__(spec)`: read `symbol_bits` (S), `c`, `delta`, `seed`,
+  `precode_rate`, `precode_degree`, `overhead` (ε). The per-symbol CRC is a
+  fixed **CRC-8** (`core.fountain.crc8`), not a tunable param — `crc_sym = 8`.
 - `encode(info_bits)`: `info_bits` is the pipeline's frame (`payload|CRC-16`);
   prepend the 16-bit length header (§2a) → `payload_bits`; `K = ⌈len /S⌉`;
   `N = ⌈(1+ε)·K⌉`; run `fountain_encode` → N `(S+crc_sym)`-bit encoded symbols.
@@ -166,10 +167,11 @@ soft codecs; consistent with BCH being hard-input). Records as **ADR-0017**.
   sharing a Raptor param block:
   - `fountain_r05` (ε=0.5), `fountain_r10` (ε=1.0), `fountain_r15` (ε=1.5),
     each `CodingSpec(name, FOUNTAIN, 0, 0, {kind:"raptor", c:0.03, delta:0.5,
-    symbol_bits:S, crc_sym_bits:C, precode_rate:P, seed:SD, overhead:ε})`
-    (`k=0, n=0` rateless). S/C/P/SD pinned in implementation:
-    `symbol_bits=16`, `crc_sym_bits=8`, `precode_rate=0.95`,
-    `precode_degree=4`, `seed=7` (shared across all three ε profiles).
+    symbol_bits:S, precode_rate:P, precode_degree:PD, seed:SD, overhead:ε})`
+    (`k=0, n=0` rateless). Params pinned in implementation:
+    `symbol_bits=16`, `precode_rate=0.95`, `precode_degree=4`, `seed=7`
+    (shared across all three ε profiles). The per-symbol CRC is a fixed CRC-8
+    (hardcoded, not a catalog param).
 - **Profile** (`core/profiles.py`): `fountain_bpsk = SCProfileSpec(
   "fountain_bpsk", SCMod.BPSK, SCProfile(sps=<U>), coding="fountain_r10")` where
   `<U>` is a **small unique** sps (not in {4,8,16,32,48,64,128,256,512}; e.g.
