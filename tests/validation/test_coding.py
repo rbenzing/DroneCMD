@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 
 def test_catalog_has_all_seven_families() -> None:
@@ -19,23 +18,13 @@ def test_catalog_has_all_seven_families() -> None:
 
 
 def test_make_codec_unimplemented_families_raise() -> None:
-    from core.coding import CODING_CATALOG, CodeFamily, make_codec
+    # All nine families are now implemented (fountain lands last, P3h) -- every
+    # catalog spec must build without raising. Name kept for history/grep
+    # continuity even though nothing raises anymore.
+    from core.coding import CODING_CATALOG, make_codec
 
     for name, spec in CODING_CATALOG.items():
-        if spec.family in (
-            CodeFamily.UNCODED,
-            CodeFamily.REPETITION,
-            CodeFamily.CONVOLUTIONAL,
-            CodeFamily.REED_SOLOMON,
-            CodeFamily.BCH,
-            CodeFamily.LDPC,
-            CodeFamily.TURBO,
-            CodeFamily.POLAR,
-        ):
-            make_codec(spec)  # builds
-        else:
-            with pytest.raises(NotImplementedError):
-                make_codec(spec)
+        make_codec(spec)  # must not raise
 
 
 def test_uncoded_and_repetition_roundtrip() -> None:
@@ -656,3 +645,38 @@ def test_polar_scale_invariance() -> None:
     ref = codec.decode(base).bits
     for k in (1e-3, 1e-1, 1e1, 1e3):
         np.testing.assert_array_equal(codec.decode(k * base).bits, ref)
+
+
+def test_make_codec_builds_fountain() -> None:
+    from core.coding import CODING_CATALOG, CodeFamily, make_codec
+
+    for spec in CODING_CATALOG.values():
+        if spec.family == CodeFamily.FOUNTAIN:
+            make_codec(spec)  # must not raise
+
+
+def test_fountain_roundtrip_and_loud_fail() -> None:
+    import numpy as np
+
+    from core.coding import (
+        CODING_CATALOG,
+        check_and_strip_crc,
+        frame_with_crc,
+        make_codec,
+    )
+
+    for name in ("fountain_r05", "fountain_r10", "fountain_r15"):
+        codec = make_codec(CODING_CATALOG[name])
+        payload = np.unpackbits(np.frombuffer(bytes(range(24)), dtype=np.uint8))
+        frame = frame_with_crc(payload.astype(np.uint8))
+        coded = codec.encode(frame)
+        out = codec.decode(coded)  # noiseless -> recovers
+        rp, ok = check_and_strip_crc(out.bits)
+        assert ok and np.array_equal(rp[: payload.size], payload)
+        # corrupt beyond capability -> loud fail (never silent wrong payload)
+        bad = coded.copy()
+        bad[:] ^= 1
+        rp2, ok2 = check_and_strip_crc(
+            make_codec(CODING_CATALOG[name]).decode(bad).bits
+        )
+        assert not ok2
