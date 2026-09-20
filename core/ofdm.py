@@ -560,3 +560,35 @@ def demodulate_ofdm_loaded(
         return np.zeros(0, dtype=np.uint8)
     result: Bits = np.concatenate(out).astype(np.uint8)
     return result
+
+
+def data_channel_response(
+    multipath_taps: "Tuple[complex, ...]",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Complex:
+    """Channel frequency response at the data subcarriers from FIR taps.
+
+    Gives the transmitter "perfect CSI" (channel state information) for
+    adaptive bit-loading: ``H_k = FFT(taps, fft_size)[bin_k]`` evaluated at
+    each data subcarrier's FFT bin, matching the multipath model applied by
+    :func:`validation.synth.channel.apply_channel` (plain convolution with
+    ``multipath_taps``, no additional delay/phase reference). Combine with
+    :func:`core.bitloading.subcarrier_snr` and :func:`core.bitloading.chow_load`
+    to compute a per-carrier bit-loading allocation before calling
+    :func:`modulate_ofdm_loaded`.
+
+    Args:
+        multipath_taps: FIR channel impulse response (tap 0 = no delay).
+        profile: OFDM PHY profile (subcarrier/CP layout) whose data
+            subcarriers to evaluate the response at.
+
+    Returns:
+        Complex128 array of length ``len(profile.data_carriers)``, the
+        complex channel gain ``H_k`` at each data subcarrier, in the same
+        order as ``profile.data_carriers``.
+    """
+    n = profile.fft_size
+    taps = np.asarray(multipath_taps, dtype=np.complex128)
+    hf = np.fft.fft(taps, n)
+    out: Complex = hf[_bins(profile, profile.data_carriers)].astype(np.complex128)
+    return out
