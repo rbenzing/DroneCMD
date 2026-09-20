@@ -123,3 +123,15 @@ def build_shortened_mask(code: PolarCode, info_len: int) -> npt.NDArray[np.bool_
         if chosen == info_len:
             break
     return frozen
+
+
+def polar_encode(info_bits: Bits, frozen_mask: npt.NDArray[np.bool_]) -> Bits:
+    """Scatter info into the unfrozen positions of a length-n vector, transform."""
+    n = frozen_mask.size
+    info = np.asarray(info_bits, dtype=np.uint8)
+    positions = np.where(~frozen_mask)[0]
+    if info.size != positions.size:
+        raise ValueError("info_bits size must equal the number of unfrozen positions")
+    u = np.zeros(n, dtype=np.uint8)
+    u[positions] = info
+    return polar_transform(u)

@@ -74,3 +74,25 @@ def test_build_shortened_mask_at_full_k_matches_nominal_frozen_mask() -> None:
     code = build_code(256, 128, 2.0)
     mask = build_shortened_mask(code, info_len=code.k)
     np.testing.assert_array_equal(mask, code.frozen_mask)
+
+
+def test_polar_encode_scatters_and_transforms() -> None:
+    from core.polar import build_code, polar_encode, polar_transform
+
+    code = build_code(256, 128, 2.0)
+    rng = np.random.default_rng(2)
+    info = rng.integers(0, 2, size=128).astype(np.uint8)
+    x = polar_encode(info, code.frozen_mask)
+    # reconstruct u and compare to a direct transform
+    u = np.zeros(256, dtype=np.uint8)
+    u[code.info_positions] = info
+    np.testing.assert_array_equal(x, polar_transform(u))
+    assert x.size == 256
+
+
+def test_polar_encode_all_frozen_is_zero() -> None:
+    from core.polar import polar_encode
+
+    all_frozen = np.ones(256, dtype=np.bool_)
+    x = polar_encode(np.zeros(0, dtype=np.uint8), all_frozen)
+    assert np.all(x == 0)
