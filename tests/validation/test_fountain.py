@@ -156,3 +156,44 @@ def test_fountain_loud_fail_too_many_erasures() -> None:
     coded[:, 0] ^= 1  # erase (almost) everything
     rec, ok, _ = fountain_decode(coded.reshape(-1), **kw)
     assert not ok  # loud fail, no silent wrong payload
+
+
+def test_fountain_decode_non_aligned_length_graceful() -> None:
+    """Regression test: fountain_decode guards against non-symbol-aligned input."""
+    from core.fountain import fountain_decode
+
+    S = 16
+    kw = dict(
+        symbol_bits=S,
+        seed=42,
+        c=0.03,
+        delta=0.5,
+        precode_rate=0.9,
+        precode_degree=4,
+        overhead=1.0,
+    )
+    # S + 8 = 24; feed a length that is NOT a multiple of 24
+    misaligned_length = 25  # 25 % 24 != 0
+    bad_coded = np.zeros(misaligned_length, dtype=np.uint8)
+    rec, ok, n_erased = fountain_decode(bad_coded, **kw)
+    assert ok is False
+    assert rec.size == 0
+    assert n_erased == 0
+
+    # Also test with a larger non-multiple length
+    bad_coded2 = np.zeros(100, dtype=np.uint8)  # 100 % 24 != 0
+    rec2, ok2, n_erased2 = fountain_decode(bad_coded2, **kw)
+    assert ok2 is False
+    assert rec2.size == 0
+    assert n_erased2 == 0
+
+
+def test_fountain_codec_path_non_aligned_graceful() -> None:
+    """Regression test: codec path gracefully handles non-aligned input."""
+    from core.coding import CODING_CATALOG, make_codec
+
+    codec = make_codec(CODING_CATALOG["fountain_r10"])
+    misaligned_input = np.zeros(25, dtype=np.uint8)  # 25 % 24 != 0
+    result = codec.decode(misaligned_input)
+    assert result.meta["decode_ok"] is False
+    assert result.bits.size == 0

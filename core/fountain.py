@@ -351,7 +351,11 @@ def fountain_decode(
             n_erased: Number of output symbols dropped due to CRC-8
                 mismatch.
     """
-    sym = np.asarray(coded_bits, dtype=np.uint8).reshape(-1, symbol_bits + 8)
+    coded_arr = np.asarray(coded_bits, dtype=np.uint8)
+    w = symbol_bits + 8
+    if w <= 0 or coded_arr.size == 0 or coded_arr.size % w != 0:
+        return np.zeros(0, dtype=np.uint8), False, 0
+    sym = coded_arr.reshape(-1, symbol_bits + 8)
     n_out = sym.shape[0]
     # Recover K from N and overhead: the unique cand with
     # ceil((1+overhead)*cand) == n_out (ceil((1+overhead)*.) is
