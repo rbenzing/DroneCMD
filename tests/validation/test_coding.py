@@ -586,6 +586,48 @@ def test_polar_roundtrip_all_rates_with_shortening() -> None:
             assert ok and np.array_equal(rp[: pbits.size], pbits)
 
 
+def test_polar_full_rate_l_equals_k_all_rates() -> None:
+    """L=K (no shortening) round-trips for each rate: 85/128/170.
+
+    ``build_shortened_mask(code, K)`` should reduce to exactly ``code.frozen_mask``
+    (the shortening tail is empty at L=K), and ``polar_encode``/``scl_decode``
+    should round-trip a K-bit info vector directly at that mask. Since payloads
+    are byte-aligned (frame = 8*nbytes + 16 CRC bits), an exact L=K frame is not
+    generally byte-aligned, so this exercises ``core.polar`` directly with a
+    K-bit info array rather than going through the byte/CRC-framed codec API
+    (whose own CRC-aided path selection expects a CRC-framed payload). The
+    ``crc_check`` callback is stubbed to always pass, isolating this test to the
+    encode/decode/mask correctness at L=K.
+    """
+    import numpy as np
+
+    from core.coding import CODING_CATALOG
+    from core.polar import build_code, build_shortened_mask, polar_encode, scl_decode
+
+    for name, k in (
+        ("polar_256_85", 85),
+        ("polar_256_128", 128),
+        ("polar_256_170", 170),
+    ):
+        spec = CODING_CATALOG[name]
+        assert spec.k == k
+        dsnr = float(spec.params["design_snr_db"])  # type: ignore[arg-type]
+        code = build_code(spec.n, k, dsnr)
+        mask = build_shortened_mask(code, k)
+        assert np.array_equal(mask, code.frozen_mask)  # no shortening tail at L=K
+
+        rng = np.random.default_rng(0)
+        info = rng.integers(0, 2, size=k).astype(np.uint8)
+        cw = polar_encode(info, mask)
+        assert cw.size == spec.n
+        llr = (1.0 - 2.0 * cw.astype(np.float64)) * 8.0  # clean channel
+        decoded, passed = scl_decode(
+            llr, mask, int(spec.params["list_size"]), lambda bits: True  # type: ignore[arg-type]
+        )
+        assert passed
+        assert np.array_equal(decoded, info)
+
+
 def test_polar_loud_fail_on_garbage() -> None:
     import numpy as np
 

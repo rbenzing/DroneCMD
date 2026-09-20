@@ -4,7 +4,7 @@
 **Phase:** P3g
 
 **Date:** 2026-09-19
-**Status:** Accepted — awaiting implementation (unreleased).
+**Status:** Accepted — implemented (unreleased).
 **Author:** rbenzing (with Claude)
 **Program:** P3 (channel coding), sub-phase **P3g** — the third iterative/soft
 codec after LDPC (P3e) and turbo (P3f): an Arıkan polar code with a CRC-aided
