@@ -208,9 +208,11 @@ uncoded/rep3/conv/RS/BCH/LDPC/turbo paths byte-for-byte unchanged.
   sub-phase (merge/version deferred to the user, as for prior sub-phases).
 - Stall guard: implementers run only targeted test files; controller runs the
   full-suite closing gate; never background a slow run silently; never run the
-  whole `test_blind_resolve.py` (use `-k`). Pure-Python SCL (list × n log n) is
-  the slow part — keep gain/e2e trial counts and payloads sized for < 30 s
-  targeted runs, per the LDPC/turbo precedent.
+  whole `test_blind_resolve.py` (use `-k`). Pure-Python SCL is the slow part
+  (the implemented decoder recomputes from the root per bit, ~`O(list·n²·log n)`;
+  a memoized cache would reach `O(list·n·log n)` — future optimization) — keep
+  gain/e2e trial counts and payloads sized for < 30 s targeted runs, per the
+  LDPC/turbo precedent.
 
 ## 8. Out of scope / future
 

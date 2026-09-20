@@ -51,7 +51,8 @@ so there is no unobtainable-table problem, only an interop non-goal.
   profiles follow. Blind-resolve trial-demod cost scales with `sps` (more
   samples per symbol to trial-demod per candidate profile), and polar's
   CA-SCL decode is itself the most expensive step in the blind pipeline
-  (list × n·log n, pure Python) — so `sps=48` was chosen to keep blind
+  (pure-Python list decoding; see the cost note under Consequences) — so
+  `sps=48` was chosen to keep blind
   resolution of `polar_bpsk` tractable rather than following the doubling
   convention, which would have made it the most expensive profile in the
   catalog on both axes at once.
@@ -71,10 +72,14 @@ so there is no unobtainable-table problem, only an interop non-goal.
 
 ### Negative / trade-offs
 - Not bit-compatible with 5G-NR polar (acceptable — interop out of scope).
-- Pure-Python SCL (list × n·log n, recursive f/g node evaluation) is slow;
-  fine for T&E, not real-time. The `polar_bpsk` profile's unique `sps=48`
-  is itself a symptom of this cost, needed to keep blind-resolution runs
-  inside the project's `<30s` targeted-test budget.
+- Pure-Python SCL is slow; fine for T&E, not real-time. The current
+  implementation recomputes the SC recursion from the root per bit (a
+  `polar_transform` per g-branch), so its true cost is ~`O(list · n² · log n)`
+  rather than the `O(list · n · log n)` of a memoized SCL — correctness is
+  unaffected and n=256 stays within the test budget, but a memoized node-LLR
+  cache is the obvious future optimization. The `polar_bpsk` profile's unique
+  `sps=48` is partly a symptom of this cost, needed to keep blind-resolution
+  runs inside the project's `<30s` targeted-test budget.
 - A heavily-shortened polar frame loses effective rate and moves off the GA
   design point — coding-gain demonstrations use a near-full-block payload
   (14 B at `polar_256_128`, `(128-16)/8`), per the same lesson LDPC/turbo
