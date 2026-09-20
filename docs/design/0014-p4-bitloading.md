@@ -87,9 +87,10 @@ blind-resolvable link profile.
   `sqrt((2/3)(M-1))`). `order == 2` is exactly `qpsk_map` (1 bit/rail, ±1/√2).
 - `qam_demap(symbols, order) -> bits`: per-rail nearest-PAM-level hard decision,
   inverse Gray, in the same interleaved I/Q bit order as `qam_map`.
-- `bits_per_symbol(order) == order`; `order == 0` carries no bits (null carrier).
-- A single `_gray_pam_levels(bits_per_rail)` / inverse builds all three orders
-  from one code path (no per-order duplication).
+- An `order`-bit symbol carries `order` bits; `order == 0` is a null carrier
+  (no bits).
+- A single shared Gray/PAM code path (`_gray_inverse(bits_per_rail)` plus the
+  common level math) builds all three orders — no per-order duplication.
 
 ### 2b. Per-subcarrier SNR from CSI
 - `subcarrier_snr(h_freq, noise_var) -> snr_per_carrier`: `|H_k|^2 / noise_var`

@@ -17,4 +17,4 @@ Numbered, committed design specs for the DroneCMD signal/coding stack. Each reco
 | 0011 | P3f | [P3f LTE-style turbo](0011-p3f-turbo.md) | Accepted (v0.4.0) |
 | 0012 | P3g | [P3g Arıkan polar + CA-SCL](0012-p3g-polar.md) | Accepted (v0.5.0) |
 | 0013 | P3h | [P3h Raptor-style fountain](0013-p3h-fountain.md) | Accepted (v0.6.0) |
-| 0014 | P4 | [P4 bit-loaded OFDM](0014-p4-bitloading.md) | Accepted (awaiting implementation) |
+| 0014 | P4 | [P4 bit-loaded OFDM](0014-p4-bitloading.md) | Accepted (implemented, unreleased) |
