@@ -71,7 +71,7 @@ def test_bitloading_beats_fixed_qpsk_goodput_selective_channel() -> None:
     OFDM. FER/goodput metric (not per-bit BER).
 
     Operating point (see ``task-5-report.md`` for the tap/SNR sweep that
-    backs this): a 4-tap FIR with ~4.5 dB of frequency-selective ripple
+    backs this): a 4-tap FIR with ~3 dB of frequency-selective ripple
     (``|H|`` in ``[1.21, 1.71]`` across the data subcarriers) at 16 dB SNR
     gives bit-loading 16/64-QAM headroom on the strong subcarriers while
     fixed QPSK pays the same per-carrier error rate everywhere it is used.
