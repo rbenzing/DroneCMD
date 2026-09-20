@@ -128,6 +128,146 @@ def test_create_hardware_interface_routes_hackrf(monkeypatch) -> None:
     assert isinstance(live.hardware, cap.SoapyHackRFHardware)
 
 
+def test_hackrf_transfer_requires_cli(monkeypatch) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", False)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_PATH", None)
+    cfg = cap.SDRConfig(platform=cap.SDRPlatform.HACKRF)
+    with pytest.raises(RuntimeError, match="hackrf_transfer CLI not found"):
+        cap.HackRFTransferHardware(cfg)
+
+
+def test_hackrf_transfer_open_configure_read(monkeypatch, tmp_path) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", True)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_PATH", "hackrf_transfer")
+    # No hackrf_info on PATH -> open() proceeds without device probe.
+    monkeypatch.setattr(cap, "_find_hackrf_binary", lambda name: None)
+
+    captured_cmds = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001
+        captured_cmds.append(cmd)
+        # Emulate hackrf_transfer writing int8 interleaved I/Q to the -r file.
+        out = cmd[cmd.index("-r") + 1]
+        n = int(cmd[cmd.index("-n") + 1])
+        np.full(2 * n, 20, dtype=np.int8).tofile(out)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cap.subprocess, "run", fake_run)
+    cfg = cap.SDRConfig(
+        platform=cap.SDRPlatform.HACKRF,
+        frequency_hz=2.44e9,
+        sample_rate_hz=8e6,
+        gain_mode=cap.GainMode.MANUAL,
+        gain_db=32.0,
+    )
+    hw = cap.HackRFTransferHardware(cfg)
+    hw.open()
+    assert hw.is_connected
+    hw.configure(cfg)
+
+    x = hw.read_samples(4096)
+    assert x.dtype == np.complex64 and x.shape == (4096,)
+    assert np.allclose(x, np.complex64((20 + 20j) / 128.0))
+
+    cmd = captured_cmds[0]
+    assert "-r" in cmd and "-t" not in cmd  # RX only, never transmit
+    assert cmd[cmd.index("-f") + 1] == str(int(2.44e9))
+    assert cmd[cmd.index("-s") + 1] == str(int(8e6))
+    hw.close()
+    assert not hw.is_connected
+
+
+def test_hackrf_transfer_read_error_is_loud(monkeypatch) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", True)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_PATH", "hackrf_transfer")
+    monkeypatch.setattr(cap, "_find_hackrf_binary", lambda name: None)
+    monkeypatch.setattr(
+        cap.subprocess,
+        "run",
+        lambda *a, **k: types.SimpleNamespace(
+            returncode=1, stdout="", stderr="usb error"
+        ),
+    )
+    cfg = cap.SDRConfig(platform=cap.SDRPlatform.HACKRF, sample_rate_hz=8e6)
+    hw = cap.HackRFTransferHardware(cfg)
+    hw.open()
+    hw.configure(cfg)
+    with pytest.raises(RuntimeError, match="hackrf_transfer failed"):
+        hw.read_samples(1024)
+
+
+def test_hackrf_transfer_rejects_out_of_range_rate(monkeypatch) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", True)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_PATH", "hackrf_transfer")
+    cfg = cap.SDRConfig(platform=cap.SDRPlatform.HACKRF, sample_rate_hz=1e6)
+    hw = cap.HackRFTransferHardware(cfg)
+    with pytest.raises(RuntimeError, match="out of range"):
+        hw.configure(cfg)
+
+
+def test_dispatch_falls_back_to_transfer_when_no_soapy(monkeypatch) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "SOAPY_SDR_AVAILABLE", False)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", True)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_PATH", "hackrf_transfer")
+    cfg = cap.SDRConfig(platform=cap.SDRPlatform.HACKRF)
+    live = cap.EnhancedLiveCapture(cfg)
+    assert isinstance(live.hardware, cap.HackRFTransferHardware)
+
+
+def test_dispatch_raises_when_no_hackrf_backend(monkeypatch) -> None:
+    import core.capture as cap
+
+    monkeypatch.setattr(cap, "SOAPY_SDR_AVAILABLE", False)
+    monkeypatch.setattr(cap, "HACKRF_TRANSFER_AVAILABLE", False)
+    cfg = cap.SDRConfig(platform=cap.SDRPlatform.HACKRF)
+    with pytest.raises(RuntimeError, match="no usable backend"):
+        cap.EnhancedLiveCapture(cfg)
+
+
+@pytest.mark.hardware
+def test_hackrf_transfer_rx_on_air_smoke() -> None:
+    """RX-only on-air smoke test for the CLI backend — SKIPPED unless the
+    ``hackrf_transfer`` CLI and a HackRF are actually present.
+
+    Captures a short buffer at 2.44 GHz and asserts basic sanity (dtype,
+    length, finite, nonzero power). Receive-only: never transmits.
+    """
+    import core.capture as cap
+
+    if not cap.HACKRF_TRANSFER_AVAILABLE:
+        pytest.skip("hackrf_transfer CLI not installed (see README: PothosSDR)")
+    cfg = cap.SDRConfig(
+        platform=cap.SDRPlatform.HACKRF,
+        frequency_hz=2.44e9,
+        sample_rate_hz=8e6,
+        gain_mode=cap.GainMode.MANUAL,
+        gain_db=32.0,
+    )
+    hw = cap.HackRFTransferHardware(cfg)
+    try:
+        hw.open()
+    except RuntimeError as e:
+        pytest.skip(f"no HackRF device reachable: {e}")
+    try:
+        hw.configure(cfg)
+        x = hw.read_samples(65536)
+        assert x.dtype == np.complex64 and x.size == 65536
+        assert np.isfinite(x).all()
+        assert float(np.mean(np.abs(x) ** 2)) > 0.0
+    finally:
+        hw.close()
+
+
 @pytest.mark.hardware
 def test_hackrf_rx_on_air_smoke() -> None:
     """RX-only on-air smoke test — SKIPPED unless SoapySDR + a HackRF are present.
