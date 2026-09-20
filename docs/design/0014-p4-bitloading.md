@@ -4,7 +4,7 @@
 **Phase:** P4
 
 **Date:** 2026-09-20
-**Status:** Accepted — awaiting implementation (unreleased).
+**Status:** Accepted — implemented (unreleased).
 **Author:** rbenzing (with Claude)
 **Program:** P4 (adaptive modulation / bit-loading) — the first phase after the
 seven-family FEC sheet (P3). Extends the OFDM PHY (`core/ofdm.py`, 802.11a-style)
