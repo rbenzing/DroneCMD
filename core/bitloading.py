@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import erfcinv
 
 Bits = npt.NDArray[np.uint8]
 Complex = npt.NDArray[np.complex128]
 Real = npt.NDArray[np.float64]
 
-__all__ = ["qam_map", "qam_demap"]
+__all__ = ["qam_map", "qam_demap", "subcarrier_snr", "chow_load"]
 
 
 def _gray_inverse(bits_per_rail: int) -> npt.NDArray[np.intp]:
@@ -143,3 +144,72 @@ def qam_demap(symbols: Complex, order: int) -> Bits:
     out[:, :bpr] = _int_to_bits(i_g, bpr)
     out[:, bpr:] = _int_to_bits(q_g, bpr)
     return out.reshape(-1)
+
+
+def subcarrier_snr(h_freq: Complex, noise_var: float) -> Real:
+    """Compute per-subcarrier linear SNR from frequency-domain channel gains.
+
+    Args:
+        h_freq: 1-D array of complex per-subcarrier channel gains ``H_k``.
+        noise_var: Scalar noise variance (must be positive; clamped to a
+            small floor to avoid division by zero).
+
+    Returns:
+        Float64 array of linear SNR values ``|H_k|^2 / noise_var``, one per
+        input subcarrier.
+    """
+    h = np.asarray(h_freq, dtype=np.complex128)
+    nv = max(float(noise_var), 1e-12)
+    return (np.abs(h) ** 2 / nv).astype(np.float64)
+
+
+def _snr_gap(target_ber: float) -> float:
+    """Compute the SNR gap Gamma for uncoded square QAM at a target BER.
+
+    Achievable bits per symbol scale as ``log2(1 + SNR/Gamma)``; the
+    feasibility SNR for bit-loading order ``o`` is ``Gamma * (2**o - 1)``.
+    Uses the standard approximation ``Gamma = (1/3) * [Q^{-1}(target_ber/4)]^2``,
+    with ``Q^{-1}(x) = sqrt(2) * erfcinv(2x)``.
+
+    Args:
+        target_ber: Target per-bit error rate (in ``(0, 1)``).
+
+    Returns:
+        The linear SNR gap Gamma.
+    """
+    qinv = float(np.sqrt(2.0)) * float(erfcinv(2.0 * (target_ber / 4.0)))
+    return (qinv * qinv) / 3.0
+
+
+def chow_load(
+    snr: Real,
+    target_ber: float,
+    allowed_orders: "tuple[int, ...]" = (0, 2, 4, 6),
+) -> npt.NDArray[np.intp]:
+    """Assign per-subcarrier bit-loading orders via Chow's rate-adaptive rule.
+
+    Each carrier is assigned the largest allowed order whose feasibility SNR
+    ``Gamma * (2**o - 1)`` is less than or equal to the carrier's SNR, so
+    every used carrier meets the target BER while total bits are maximized.
+    Carriers that cannot support even the smallest positive order are nulled
+    (assigned order 0).
+
+    Args:
+        snr: 1-D array of per-subcarrier linear SNR values (e.g. from
+            :func:`subcarrier_snr`).
+        target_ber: Target per-bit error rate used to derive the SNR gap.
+        allowed_orders: Candidate bit-loading orders to consider, including
+            0 for a nulled carrier. Defaults to ``(0, 2, 4, 6)``.
+
+    Returns:
+        Integer (``intp``) array of the same length as ``snr``, giving the
+        assigned bit-loading order per subcarrier.
+    """
+    s = np.asarray(snr, dtype=np.float64)
+    gap = _snr_gap(target_ber)
+    orders = sorted(o for o in allowed_orders if o > 0)
+    alloc = np.zeros(s.size, dtype=np.intp)
+    for o in orders:
+        required = gap * ((1 << o) - 1)
+        alloc[s >= required] = o
+    return alloc

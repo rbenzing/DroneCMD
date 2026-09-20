@@ -42,3 +42,33 @@ def test_qam_gray_single_bit_neighbor() -> None:
     out = qam_demap(noisy, order)
     per_sym_errs = (out.reshape(-1, order) != bits.reshape(-1, order)).sum(axis=1)
     assert per_sym_errs.max() <= 1
+
+
+def test_subcarrier_snr() -> None:
+    from core.bitloading import subcarrier_snr
+
+    h = np.array([1.0, 2.0, 0.5], dtype=np.complex128)
+    snr = subcarrier_snr(h, noise_var=0.25)
+    np.testing.assert_allclose(snr, np.array([4.0, 16.0, 1.0]))  # |H|^2/nv
+
+
+def test_chow_load_allocates_more_to_stronger() -> None:
+    from core.bitloading import chow_load
+
+    # increasing SNR across carriers -> non-decreasing bit allocation, entries in {0,2,4,6}
+    snr = np.array([0.5, 2.0, 8.0, 40.0, 500.0], dtype=np.float64)
+    alloc = chow_load(snr, target_ber=1e-3)
+    assert set(np.unique(alloc)).issubset({0, 2, 4, 6})
+    assert np.all(np.diff(alloc) >= 0)  # monotone in SNR
+    assert alloc[0] == 0 and alloc[-1] == 6  # weakest nulled, strongest full
+    assert (
+        chow_load(snr, 1e-3).tolist() == chow_load(snr, 1e-3).tolist()
+    )  # deterministic
+
+
+def test_chow_load_total_bits_monotone_in_quality() -> None:
+    from core.bitloading import chow_load
+
+    rng = np.random.default_rng(3)
+    base = rng.random(48) * 50.0
+    assert chow_load(base * 4.0, 1e-3).sum() >= chow_load(base, 1e-3).sum()
