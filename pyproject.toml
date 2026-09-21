@@ -129,7 +129,8 @@ dev = [
     "pytest-cov>=4.1.0,<5.0.0",
     "pytest-mock>=3.11.0,<4.0.0",
     "pytest-xdist>=3.3.0,<4.0.0",
-    
+    "pytest-timeout>=2.1.0,<3.0.0",
+
     # Code quality
     "black>=23.7.0,<24.0.0",
     "flake8>=6.0.0,<7.0.0",
@@ -279,6 +280,11 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
+    # Safety net: no single test may hang the suite. The floor is generous so
+    # the heaviest (slow-marked) Monte-Carlo tests pass comfortably; only a
+    # genuine hang trips it. Thread method works on Windows (no SIGALRM).
+    "--timeout=600",
+    "--timeout-method=thread",
 ]
 testpaths = ["tests"]
 markers = [
