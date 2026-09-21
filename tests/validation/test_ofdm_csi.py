@@ -1,11 +1,7 @@
 import numpy as np
 
 from core.ofdm import DEFAULT_OFDM_PROFILE as P
-from core.ofdm import (
-    modulate_ofdm,
-    ofdm_equalized_symbols,
-    ofdm_equalized_symbols_csi,
-)
+from core.ofdm import modulate_ofdm, ofdm_equalized_symbols, ofdm_equalized_symbols_csi
 
 
 def test_csi_matches_symbols_and_flat_channel():
