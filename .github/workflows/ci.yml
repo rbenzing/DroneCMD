@@ -43,7 +43,7 @@ jobs:
       - name: flake8
         run: flake8 validation tests/validation
       - name: mypy
-        run: mypy validation
+        run: mypy validation core/blind.py core/single_carrier.py core/ofdm.py core/selftest.py
 
   test:
     name: Test (py${{ matrix.python-version }})
