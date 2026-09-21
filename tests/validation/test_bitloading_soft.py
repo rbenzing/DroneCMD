@@ -37,6 +37,35 @@ def test_per_symbol_weight_broadcast():
     np.testing.assert_allclose(llr.reshape(3, order), base * w[:, None], rtol=1e-9)
 
 
+def _oracle_soft(sym, order, weight):
+    """Independent unit-energy max-log LLR over the full 2-D constellation."""
+    labels = np.array(
+        [list(map(int, format(v, f"0{order}b"))) for v in range(1 << order)],
+        dtype=np.uint8,
+    )
+    pts = np.array([qam_map(labels[v], order)[0] for v in range(1 << order)])
+    d = np.abs(sym - pts) ** 2  # unit-average-energy distances
+    out = np.empty(order, dtype=np.float64)
+    for j in range(order):
+        b1 = labels[:, j] == 1
+        out[j] = weight * (d[b1].min() - d[~b1].min())
+    return out
+
+
+@pytest.mark.parametrize("order", [2, 4, 6])
+def test_soft_matches_unit_energy_oracle_cross_order(order):
+    # Pins the *relative* per-order weighting: the LLR must be weight x
+    # unit-energy max-log distances, with NO order-dependent norm^2 factor. A
+    # regression here (e.g. 5x/21x inflation for 16/64-QAM) breaks BICM.
+    rng = np.random.default_rng(7)
+    for _ in range(50):
+        sym = (rng.standard_normal() + 1j * rng.standard_normal()) * 0.5
+        w = float(rng.uniform(0.3, 5.0))
+        got = qam_soft_demap(np.array([sym], dtype=np.complex128), order, w)
+        exp = _oracle_soft(sym, order, w)
+        np.testing.assert_allclose(got, exp, rtol=1e-9, atol=1e-9)
+
+
 def test_bad_order_raises():
     with pytest.raises(ValueError):
         qam_soft_demap(np.zeros(4, dtype=np.complex128), 3)

@@ -204,6 +204,13 @@ def qam_soft_demap(symbols: Complex, order: int, weight: "Real | float" = 1.0) -
     llr = np.empty((s.size, order), dtype=np.float64)
     llr[:, :bpr] = rail_llrs(s.real)
     llr[:, bpr:] = rail_llrs(s.imag)
+    # rail_llrs measures squared distances in the de-normalized integer-PAM
+    # domain, which are norm**2 times the unit-average-energy distances. Divide
+    # them back so the reliability weight |h_k|**2/N0 multiplies *unit-energy*
+    # distances -- otherwise the effective weight would carry an order-dependent
+    # norm**2 factor (2/10/42 for orders 2/4/6), mis-weighting high-order
+    # carriers relative to QPSK and breaking the BICM premise (see ADR-0020).
+    llr /= norm * norm
     if w.ndim == 0:
         llr *= float(w)
     else:
