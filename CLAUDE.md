@@ -119,7 +119,8 @@ Use `asyncio.run()` for top-level async calls. Use `asyncio.create_task()` for b
 - **`injector/`** — Packet injection: `suringe.py` (injection engine), `obfuscation.py`
 - **`training/`** — Classifier training pipeline: `dataset.py` (feature extraction from labeled captures), `train.py` (sklearn ensemble training + cross-validation)
 - **`validation/`** — Validation & Test-and-Evaluation (T&E) spine: synthetic signal generator + calibrated channel model (`synth/`, including coded modulation via `modulate(coding=...)`), real-capture ingestion (`ingest/`), unified SigMF-backed `LabeledDataset` (`dataset.py`), injectable detect→demod→classify `pipeline.py` (with soft/hard coded-decode branches and blind link resolution), detection/classification metrics **plus the coded-link (coded BER/FER) metric** with bootstrap CIs (`metrics.py`), evaluation `harness.py`, JSON `report.py`, reproducibility manifest (`repro.py`). Library-first public API in `validation/__init__.py`; driven by `dronecmd validate`
-- **`cli.py`** — argparse-based CLI (subcommands: `capture`, `analyze`, `replay`, `generate`, `convert`, `config`, `info`, `train`, `validate`) with JSON output support
+- **`cli.py`** — argparse-based CLI (subcommands: `capture`, `analyze`, `replay`, `generate`, `convert`, `config`, `info`, `selftest`, `train`, `validate`) with JSON output support
+- **`core/selftest.py`** — hardware-in-the-loop RX self-test: drives a real HackRF (receive-only) across capture parameters, both capture APIs, the analysis pipeline and the CLI, returning a pass/fail result set. Exposed as `dronecmd selftest` and `scripts/hackrf_selftest.py`
 - **`constants.py`** — RF frequency ranges, sample rates, protocol constants
 - **`exceptions.py`** — Custom exception hierarchy
 
