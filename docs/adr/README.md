@@ -37,3 +37,4 @@ them.
 | [0017](0017-fountain-raptor-erasure.md) | Fountain — Raptor-style precode + Robust-Soliton LT, per-symbol-CRC erasure, GF(2)-GE decode | Accepted |
 | [0018](0018-bit-loaded-ofdm.md) | Bit-loaded OFDM — adaptive square-QAM via Chow's rate-adaptive loading | Accepted |
 | [0019](0019-hackrf-rx-backends.md) | HackRF RX backends — SoapySDR + `hackrf_transfer` CLI fallback | Accepted |
+| [0020](0020-bicm-per-subcarrier-llr-weighting.md) | Coded bit-loaded OFDM — BICM + per-subcarrier `|h_k|²/N0` LLR weighting | Accepted |
