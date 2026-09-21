@@ -43,17 +43,20 @@ Test markers: `slow`, `integration`, `hardware`, `async`
 # Format + lint everything (flat layout — no `dronecmd` package)
 black . && isort . && flake8
 
-# Type-check. `mypy validation` is the CI-enforced strict-clean gate; the
-# legacy modules carry pre-existing type debt and are not gated.
-mypy validation
+# Type-check. The CI-enforced strict-clean gate is `validation/` plus the
+# hardened signal-core modules below; the remaining legacy modules carry
+# pre-existing type debt and are not gated.
+mypy validation core/blind.py core/single_carrier.py core/ofdm.py core/selftest.py
 mypy core capture plugins utils injector cli.py   # legacy — has known findings
 
 bandit -r core capture plugins utils injector cli.py  # Security scanning
 ```
 
-CI (`.github/workflows/ci.yml`) runs `black`/`isort`/`flake8`/`mypy` scoped to
-`validation/` (already clean) plus the full `pytest` suite on Python 3.9–3.12
-for every push and PR to `main`.
+CI (`.github/workflows/ci.yml`) runs `black`/`isort`/`flake8` scoped to
+`validation/` and `mypy` over `validation/` plus the hardened signal-core
+modules (`core/blind.py`, `core/single_carrier.py`, `core/ofdm.py`,
+`core/selftest.py`), plus the `pytest` suite (`-m "not slow and not hardware"`)
+on Python 3.9–3.12 for every push and PR to `main`.
 
 ### CLI Usage
 ```bash

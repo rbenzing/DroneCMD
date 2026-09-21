@@ -84,7 +84,7 @@ def _assert_iq(x: np.ndarray, n: int) -> str:
     return f"n={x.size} power={power:.3e} peak={float(np.max(np.abs(x))):.3f}"
 
 
-def _cfg(**kw: Any):
+def _cfg(**kw: Any) -> Any:
     from core.capture import GainMode, SDRConfig, SDRPlatform
 
     params: Dict[str, Any] = dict(
@@ -366,7 +366,7 @@ def _repo_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _cli(*args: str, timeout: float = 60.0):
+def _cli(*args: str, timeout: float = 60.0) -> Any:
     import subprocess
     import sys
 
