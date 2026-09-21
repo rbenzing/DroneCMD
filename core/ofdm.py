@@ -18,16 +18,20 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING, Any, Tuple
 
 import numpy as np
 import numpy.typing as npt
 
-from core.bitloading import qam_demap, qam_map
+from core.bitloading import qam_demap, qam_map, qam_soft_demap
+
+if TYPE_CHECKING:
+    from core.coding import CodingSpec
 
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
 LLRs = npt.NDArray[np.float64]
+Real = npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True)
@@ -272,26 +276,26 @@ def ofdm_sync_confidence(
     return float(np.max(metric[:search_span]))
 
 
-def ofdm_equalized_symbols(
-    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
-) -> Complex:
-    """Equalized data subcarriers for every data symbol, concatenated.
+def _ofdm_equalize_csi(
+    rx: Complex, profile: OFDMProfile
+) -> Tuple[Complex, Real, float]:
+    """Shared equalizer core: equalized data symbols + per-carrier CSI.
 
-    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
-    LTF least-squares channel estimation, and per-symbol one-tap equalization
-    with pilot common-phase-error correction as :func:`demodulate_ofdm`, but
-    returns the equalized data-subcarrier symbols (the pre-demap signal, in
-    subcarrier order, all data symbols concatenated) rather than demapped bits.
-    Empty when ``rx`` is shorter than the STF+LTF preamble or yields no data
-    symbol. Used by the blind OFDM resolver (:mod:`core.blind`) to score
-    trial-demodulation quality; :func:`demodulate_ofdm` demaps its output.
+    Returns ``(syms, gain_sq, noise_var)`` where ``syms`` is the concatenated
+    equalized data subcarriers (the value :func:`ofdm_equalized_symbols`
+    returns), ``gain_sq`` is ``|h_k|^2`` per data carrier tiled across the data
+    symbols (same shape/order as ``syms``), and ``noise_var`` is the scalar
+    ``N0`` estimated from pilot residuals. On sync failure returns
+    ``(empty, empty, nan)``.
     """
     n = profile.fft_size
     slen = profile.symbol_len
     half = n // 2
+    empty = np.zeros(0, dtype=np.complex128)
+    empty_r = np.zeros(0, dtype=np.float64)
     x = np.asarray(rx, dtype=np.complex128)
     if len(x) < 2 * slen:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     # 1. Coarse timing = argmax of the S&C metric (max of the S&C metric).
     # The true STF boundary sits within the metric's flat-topped plateau
     # (the metric stays near-peak for a range of `d` around the exact
@@ -307,7 +311,7 @@ def ofdm_equalized_symbols(
     # away from the true (but noisy) preamble peak.
     metric, p = _sc_metric(x, half)
     if metric.size == 0:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     search_span = min(len(metric), slen)
     d_body = int(np.argmax(metric[:search_span]))
     # 2. Fractional CFO from the STF half-symbol phase; derotate the burst.
@@ -318,14 +322,17 @@ def ofdm_equalized_symbols(
     _, ltf_known = _ltf_freq(profile)
     ltf_start = d_body + slen
     if ltf_start + n > len(x):
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     y_ltf = np.fft.fft(x[ltf_start : ltf_start + n], n)
     h = np.ones(n, dtype=np.complex128)
     h[occ_bins] = y_ltf[occ_bins] / ltf_known
     data_bins = _bins(profile, profile.data_carriers)
     pilot_bins = _bins(profile, profile.pilot_carriers)
     pilot_vals = np.asarray(profile.pilot_values, dtype=np.complex128)
+    h_data_sq = (np.abs(h[data_bins]) ** 2).astype(np.float64)  # per data carrier
+    h_pilot_sq = (np.abs(h[pilot_bins]) ** 2).astype(np.float64)
     syms = []
+    n0_terms: list = []
     i = 0
     # 4. Per data symbol: equalize, pilot CPE correction, collect equalized
     #    data subcarriers (demapping happens in demodulate_ofdm).
@@ -343,11 +350,50 @@ def ofdm_equalized_symbols(
         cpe = float(np.angle(np.sum(pilots_eq * np.conj(pilot_vals))))
         data_eq = (y[data_bins] / (h[data_bins] + 1e-12)) * np.exp(-1j * cpe)
         syms.append(data_eq)
+        # N0 from pilot residuals: |h_k|^2 * |y_eq,k - pilot_k|^2 ~ N0 (the
+        # pre-equalization noise power), CPE-corrected to match the data path.
+        pilot_resid = pilots_eq * np.exp(-1j * cpe) - pilot_vals
+        n0_terms.append(h_pilot_sq * (np.abs(pilot_resid) ** 2))
         i += 1
     if not syms:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     out: Complex = np.concatenate(syms).astype(np.complex128)
-    return out
+    gain_sq: Real = np.tile(h_data_sq, len(syms)).astype(np.float64)
+    noise_var = float(np.mean(np.concatenate(n0_terms))) if n0_terms else float("nan")
+    return out, gain_sq, noise_var
+
+
+def ofdm_equalized_symbols(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Complex:
+    """Equalized data subcarriers for every data symbol, concatenated.
+
+    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
+    LTF least-squares channel estimation, and per-symbol one-tap equalization
+    with pilot common-phase-error correction as :func:`demodulate_ofdm`, but
+    returns the equalized data-subcarrier symbols (the pre-demap signal, in
+    subcarrier order, all data symbols concatenated) rather than demapped bits.
+    Empty when ``rx`` is shorter than the STF+LTF preamble or yields no data
+    symbol. Used by the blind OFDM resolver (:mod:`core.blind`) to score
+    trial-demodulation quality; :func:`demodulate_ofdm` demaps its output.
+    """
+    syms, _, _ = _ofdm_equalize_csi(rx, profile)
+    return syms
+
+
+def ofdm_equalized_symbols_csi(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Tuple[Complex, Real, float]:
+    """Equalized data symbols plus per-subcarrier CSI for soft demapping.
+
+    Like :func:`ofdm_equalized_symbols`, but also returns the per-data-carrier
+    squared channel gain ``|h_k|^2`` (tiled across the data symbols, same shape
+    and subcarrier order as the returned symbols) and a scalar noise-variance
+    estimate ``N0`` from pilot residuals. A soft QAM demapper weights each
+    carrier by ``|h_k|^2 / N0`` (see :func:`core.bitloading.qam_soft_demap` and
+    ADR-0020). Returns ``(empty, empty, nan)`` on sync failure (loud-on-failure).
+    """
+    return _ofdm_equalize_csi(rx, profile)
 
 
 def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) -> Bits:
@@ -565,6 +611,154 @@ def demodulate_ofdm_loaded(
         return np.zeros(0, dtype=np.uint8)
     result: Bits = np.concatenate(out).astype(np.uint8)
     return result
+
+
+def demodulate_ofdm_loaded_soft(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> LLRs:
+    """Soft-LLR counterpart of :func:`demodulate_ofdm_loaded`.
+
+    Recovers the same allocation from the fixed-QPSK header, then soft-demaps
+    each data carrier at its signaled order via
+    :func:`core.bitloading.qam_soft_demap`, weighting each carrier by its
+    reliability ``|h_k|^2 / N0`` (from :func:`ofdm_equalized_symbols_csi`). The
+    LLRs are emitted in the exact bit order :func:`modulate_ofdm_loaded` packs
+    its payload (symbol-major then carrier-major, nulled carriers skipped), with
+    the repo-wide convention ``L > 0`` => bit 0. Empty on sync failure.
+
+    A soft-input FEC decoder consumes these LLRs directly; hard-slicing
+    (``llr < 0``) reproduces :func:`demodulate_ofdm_loaded`.
+    """
+    syms, gain_sq, noise_var = ofdm_equalized_symbols_csi(rx, profile)
+    nd = len(profile.data_carriers)
+    if syms.size < nd:  # need at least the header symbol
+        return np.zeros(0, dtype=np.float64)
+    grid = syms.reshape(-1, nd)
+    gain_grid = gain_sq.reshape(-1, nd)
+    n0 = noise_var if (np.isfinite(noise_var) and noise_var > 1e-12) else 1e-12
+    allocation = unpack_allocation(qpsk_demap(grid[0]))
+    out: "list[LLRs]" = []
+    for row_i in range(1, grid.shape[0]):
+        row = grid[row_i]
+        gain_row = gain_grid[row_i]
+        for k in range(nd):
+            o = int(allocation[k])
+            if o > 0:
+                w = float(gain_row[k]) / n0
+                out.append(
+                    qam_soft_demap(np.asarray([row[k]], dtype=np.complex128), o, w)
+                )
+    if not out:
+        return np.zeros(0, dtype=np.float64)
+    result: LLRs = np.concatenate(out).astype(np.float64)
+    return result
+
+
+# Uncoded length prefix telling the RX how many interleaved coded bits to keep
+# before deinterleaving. modulate_ofdm_loaded zero-pads the payload to a
+# subcarrier boundary, so without this the RX cannot tell where the coded stream
+# ends and padding begins (which corrupts decode + CRC). The prefix rides the
+# (possibly weak / high-order) bit-loaded carriers uncoded, so it is repeated
+# _CODED_LEN_HEADER_REPS times and majority-voted at RX for robustness.
+_CODED_LEN_HEADER_BITS = 32
+_CODED_LEN_HEADER_REPS = 3
+
+
+def _int_to_len_header(value: int) -> "npt.NDArray[np.uint8]":
+    shifts = np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
+    one = ((int(value) >> shifts) & 1).astype(np.uint8)
+    return np.tile(one, _CODED_LEN_HEADER_REPS).astype(np.uint8)
+
+
+def _len_header_to_int(bits: "npt.NDArray[np.uint8]") -> int:
+    reps = bits.reshape(_CODED_LEN_HEADER_REPS, _CODED_LEN_HEADER_BITS)
+    voted = (reps.sum(axis=0) * 2 > _CODED_LEN_HEADER_REPS).astype(np.int64)
+    weights = 1 << np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
+    return int(np.sum(voted * weights))
+
+
+_CODED_LEN_HEADER_TOTAL = _CODED_LEN_HEADER_BITS * _CODED_LEN_HEADER_REPS
+
+
+def modulate_coded_ofdm_loaded(
+    data: bytes,
+    allocation: "npt.NDArray[np.intp]",
+    coding: "CodingSpec",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Complex:
+    """Encode + interleave ``data`` and transmit it over bit-loaded OFDM (BICM).
+
+    Pipeline (matching the T&E convention): ``unpackbits -> frame_with_crc ->
+    codec.encode -> interleave(depth 8)``, prefixed with a 32-bit count of the
+    interleaved coded bits, then ``modulate_ofdm_loaded``. The prefix lets the RX
+    strip the subcarrier-boundary zero padding before decoding. The FEC coded
+    bits are adaptively mapped onto the subcarriers by ``allocation`` (compute it
+    from CSI with ``chow_load(subcarrier_snr(data_channel_response(taps), N0))``).
+    Decode with :func:`decode_coded_ofdm_loaded`. See ADR-0020.
+    """
+    from core.coding import (
+        CODING_INTERLEAVE_DEPTH,
+        frame_with_crc,
+        interleave,
+        make_codec,
+    )
+
+    bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+    frame = frame_with_crc(bits)
+    coded = make_codec(coding).encode(frame)
+    il = interleave(coded, CODING_INTERLEAVE_DEPTH)
+    payload = np.concatenate([_int_to_len_header(int(il.size)), il]).astype(np.uint8)
+    return modulate_ofdm_loaded(payload, allocation, profile)
+
+
+def decode_coded_ofdm_loaded(
+    rx: Complex,
+    coding: "CodingSpec",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Tuple[bytes, bool]:
+    """Recover the payload from a coded bit-loaded OFDM burst (inverse of
+    :func:`modulate_coded_ofdm_loaded`).
+
+    Reads the 32-bit coded-length prefix (hard), truncates to exactly the
+    interleaved coded bits (dropping subcarrier-boundary padding), then
+    ``deinterleave -> codec.decode -> check_and_strip_crc``. Soft-input codecs
+    consume per-carrier weighted LLRs from :func:`demodulate_ofdm_loaded_soft`;
+    hard-only codecs use the hard demod. Returns ``(payload_bytes, crc_ok)``;
+    ``(b"", False)`` on sync failure, a bad length, or CRC failure
+    (loud-on-failure, ADR-0006).
+    """
+    from core.coding import (
+        CODING_INTERLEAVE_DEPTH,
+        check_and_strip_crc,
+        deinterleave,
+        make_codec,
+    )
+
+    recv: "npt.NDArray[Any]"
+    if coding.soft_input:
+        recv = demodulate_ofdm_loaded_soft(rx, profile)
+    else:
+        recv = demodulate_ofdm_loaded(rx, profile)
+    hdr = _CODED_LEN_HEADER_TOTAL
+    if recv.size < hdr:
+        return b"", False
+    # Hard-slice the repeated length prefix: soft LLRs use L<0 => bit 1; the
+    # hard demod already returns 0/1 bits. _len_header_to_int majority-votes.
+    if recv.dtype.kind == "f":
+        hdr_bits = (recv[:hdr] < 0).astype(np.uint8)
+    else:
+        hdr_bits = recv[:hdr].astype(np.uint8)
+    coded_len = _len_header_to_int(hdr_bits)
+    if coded_len <= 0 or hdr + coded_len > recv.size:
+        return b"", False
+    # deint is uint8 (hard) or float64 (soft) LLRs -- a valid SoftOrHard; the
+    # codec dispatches on dtype. deinterleave is generically typed, so widen.
+    deint: Any = deinterleave(recv[hdr : hdr + coded_len], CODING_INTERLEAVE_DEPTH)
+    frame = make_codec(coding).decode(deint).bits
+    payload_bits, ok = check_and_strip_crc(frame)
+    if not ok:
+        return b"", False
+    return bytes(np.packbits(payload_bits).tobytes()), True
 
 
 def data_channel_response(

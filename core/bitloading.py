@@ -12,7 +12,9 @@ Bits = npt.NDArray[np.uint8]
 Complex = npt.NDArray[np.complex128]
 Real = npt.NDArray[np.float64]
 
-__all__ = ["qam_map", "qam_demap", "subcarrier_snr", "chow_load"]
+__all__ = ["qam_map", "qam_demap", "qam_soft_demap", "subcarrier_snr", "chow_load"]
+
+LLRs = npt.NDArray[np.float64]
 
 
 def _gray_inverse(bits_per_rail: int) -> npt.NDArray[np.intp]:
@@ -144,6 +146,76 @@ def qam_demap(symbols: Complex, order: int) -> Bits:
     out[:, :bpr] = _int_to_bits(i_g, bpr)
     out[:, bpr:] = _int_to_bits(q_g, bpr)
     return out.reshape(-1)
+
+
+def qam_soft_demap(symbols: Complex, order: int, weight: "Real | float" = 1.0) -> LLRs:
+    """Soft (max-log LLR) inverse of :func:`qam_map` (order in {2,4,6}).
+
+    Emits ``order`` per-bit LLRs per symbol, in the same MSB-first I-then-Q
+    order as :func:`qam_map`, with the repo-wide convention **``L > 0`` => bit
+    0** (``L = log P(bit=0)/P(bit=1)``). The level/label tables are derived from
+    the same construction as :func:`qam_map`, so soft and hard demap cannot
+    drift: hard-slicing (``llr < 0``) reproduces :func:`qam_demap`.
+
+    For each Gray-coded sqrt(M)-PAM rail (I then Q, ``order // 2`` bits each) and
+    each bit position, the max-log LLR of received rail value ``r`` is
+    ``weight * (min_{levels: bit=1} (r - a)^2 - min_{levels: bit=0} (r - a)^2)``.
+    When bit 0 is nearer, ``min_{bit=0}`` is smaller, so ``L > 0`` => bit 0.
+
+    Args:
+        symbols: 1-D complex square-QAM symbols (unit-average-energy scale).
+        order: Bits per symbol; one of ``{2, 4, 6}``.
+        weight: Per-symbol reliability ``|h_k|^2 / N0`` -- a scalar, or a 1-D
+            array broadcast over ``symbols``. A global scale does not change
+            hard decisions but the *relative* per-symbol weighting is what lets
+            a soft FEC decoder exploit strong subcarriers (see ADR-0020).
+
+    Returns:
+        1-D ``float64`` array of ``symbols.size * order`` LLRs.
+
+    Raises:
+        ValueError: If ``order`` is not one of ``{2, 4, 6}``.
+    """
+    if order not in (2, 4, 6):
+        raise ValueError(f"unsupported QAM order: {order}")
+    bpr = order // 2
+    L = 1 << bpr
+    norm = np.sqrt((2.0 / 3.0) * ((1 << order) - 1))
+    s = np.asarray(symbols, dtype=np.complex128).reshape(-1) * norm
+    w = np.asarray(weight, dtype=np.float64)
+
+    # Per-rail level amplitudes (natural index n) and their MSB-first Gray bit
+    # labels -- exactly qam_map's construction (amp = (L-1) - 2n, label = gray(n)).
+    n = np.arange(L, dtype=np.intp)
+    amps = (L - 1) - 2.0 * n  # (L,)
+    labels = _int_to_bits((n ^ (n >> 1)).astype(np.intp), bpr)  # (L, bpr)
+
+    def rail_llrs(r: Real) -> LLRs:
+        dist2 = (r[:, None] - amps[None, :]) ** 2  # (K, L)
+        out = np.empty((r.size, bpr), dtype=np.float64)
+        big = np.inf
+        for j in range(bpr):
+            bit1 = labels[:, j] == 1
+            min1 = np.min(np.where(bit1[None, :], dist2, big), axis=1)
+            min0 = np.min(np.where(~bit1[None, :], dist2, big), axis=1)
+            out[:, j] = min1 - min0
+        return out
+
+    llr = np.empty((s.size, order), dtype=np.float64)
+    llr[:, :bpr] = rail_llrs(s.real)
+    llr[:, bpr:] = rail_llrs(s.imag)
+    # rail_llrs measures squared distances in the de-normalized integer-PAM
+    # domain, which are norm**2 times the unit-average-energy distances. Divide
+    # them back so the reliability weight |h_k|**2/N0 multiplies *unit-energy*
+    # distances -- otherwise the effective weight would carry an order-dependent
+    # norm**2 factor (2/10/42 for orders 2/4/6), mis-weighting high-order
+    # carriers relative to QPSK and breaking the BICM premise (see ADR-0020).
+    llr /= norm * norm
+    if w.ndim == 0:
+        llr *= float(w)
+    else:
+        llr *= w[:, None]
+    return llr.reshape(-1)
 
 
 def subcarrier_snr(h_freq: Complex, noise_var: float) -> Real:
