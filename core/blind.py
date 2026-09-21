@@ -291,7 +291,13 @@ def resolve_ofdm_profile(iq: Complex) -> Tuple[Optional[str], float]:
             locked.append((name, conf, _ofdm_data_evm(signal, profile)))
     if not locked:
         return None, best_conf
-    name, conf, evm = min(locked, key=lambda t: t[2])
+    # A non-finite EVM (degenerate equalization on noise) is never a valid
+    # lock: exclude it from candidacy so it cannot slip past the ceiling
+    # (nan > OFDM_EVM_MAX is False) as a false confident lock.
+    finite = [t for t in locked if np.isfinite(t[2])]
+    if not finite:
+        return None, best_conf
+    name, conf, evm = min(finite, key=lambda t: t[2])
     if evm > OFDM_EVM_MAX:
         return None, best_conf
     return name, conf

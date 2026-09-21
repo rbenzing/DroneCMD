@@ -334,9 +334,14 @@ def ofdm_equalized_symbols(
         if b0 + n > len(x):
             break
         y = np.fft.fft(x[b0 : b0 + n], n)
-        pilots_eq = y[pilot_bins] / h[pilot_bins]
+        # Guard the one-tap equalizer against near-zero channel bins (h ~ 0 on
+        # noise / unoccupied bins): an unguarded y/h emits nan/inf, which then
+        # yields a nan EVM that silently defeats the loud-on-failure ceiling in
+        # blind resolution (nan > threshold is False). The 1e-12 floor keeps
+        # legitimate estimates (|h| ~ 1) unchanged.
+        pilots_eq = y[pilot_bins] / (h[pilot_bins] + 1e-12)
         cpe = float(np.angle(np.sum(pilots_eq * np.conj(pilot_vals))))
-        data_eq = (y[data_bins] / h[data_bins]) * np.exp(-1j * cpe)
+        data_eq = (y[data_bins] / (h[data_bins] + 1e-12)) * np.exp(-1j * cpe)
         syms.append(data_eq)
         i += 1
     if not syms:
