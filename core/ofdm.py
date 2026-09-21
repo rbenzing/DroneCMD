@@ -23,7 +23,7 @@ from typing import Tuple
 import numpy as np
 import numpy.typing as npt
 
-from core.bitloading import qam_demap, qam_map
+from core.bitloading import qam_demap, qam_map, qam_soft_demap
 
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
@@ -607,6 +607,47 @@ def demodulate_ofdm_loaded(
     if not out:
         return np.zeros(0, dtype=np.uint8)
     result: Bits = np.concatenate(out).astype(np.uint8)
+    return result
+
+
+def demodulate_ofdm_loaded_soft(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> LLRs:
+    """Soft-LLR counterpart of :func:`demodulate_ofdm_loaded`.
+
+    Recovers the same allocation from the fixed-QPSK header, then soft-demaps
+    each data carrier at its signaled order via
+    :func:`core.bitloading.qam_soft_demap`, weighting each carrier by its
+    reliability ``|h_k|^2 / N0`` (from :func:`ofdm_equalized_symbols_csi`). The
+    LLRs are emitted in the exact bit order :func:`modulate_ofdm_loaded` packs
+    its payload (symbol-major then carrier-major, nulled carriers skipped), with
+    the repo-wide convention ``L > 0`` => bit 0. Empty on sync failure.
+
+    A soft-input FEC decoder consumes these LLRs directly; hard-slicing
+    (``llr < 0``) reproduces :func:`demodulate_ofdm_loaded`.
+    """
+    syms, gain_sq, noise_var = ofdm_equalized_symbols_csi(rx, profile)
+    nd = len(profile.data_carriers)
+    if syms.size < nd:  # need at least the header symbol
+        return np.zeros(0, dtype=np.float64)
+    grid = syms.reshape(-1, nd)
+    gain_grid = gain_sq.reshape(-1, nd)
+    n0 = noise_var if (np.isfinite(noise_var) and noise_var > 1e-12) else 1e-12
+    allocation = unpack_allocation(qpsk_demap(grid[0]))
+    out: "list[LLRs]" = []
+    for row_i in range(1, grid.shape[0]):
+        row = grid[row_i]
+        gain_row = gain_grid[row_i]
+        for k in range(nd):
+            o = int(allocation[k])
+            if o > 0:
+                w = float(gain_row[k]) / n0
+                out.append(
+                    qam_soft_demap(np.asarray([row[k]], dtype=np.complex128), o, w)
+                )
+    if not out:
+        return np.zeros(0, dtype=np.float64)
+    result: LLRs = np.concatenate(out).astype(np.float64)
     return result
 
 
