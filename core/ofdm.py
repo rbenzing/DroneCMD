@@ -18,12 +18,15 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING, Any, Tuple
 
 import numpy as np
 import numpy.typing as npt
 
 from core.bitloading import qam_demap, qam_map, qam_soft_demap
+
+if TYPE_CHECKING:
+    from core.coding import CodingSpec
 
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
@@ -649,6 +652,104 @@ def demodulate_ofdm_loaded_soft(
         return np.zeros(0, dtype=np.float64)
     result: LLRs = np.concatenate(out).astype(np.float64)
     return result
+
+
+# Width of the uncoded length prefix that tells the RX how many interleaved
+# coded bits to keep before deinterleaving. modulate_ofdm_loaded zero-pads the
+# payload to a subcarrier boundary, so without this the RX cannot tell where the
+# coded stream ends and the padding begins (which corrupts decode + CRC).
+_CODED_LEN_HEADER_BITS = 32
+
+
+def _int_to_len_header(value: int) -> "npt.NDArray[np.uint8]":
+    shifts = np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
+    return ((value >> shifts) & 1).astype(np.uint8)
+
+
+def _len_header_to_int(bits: "npt.NDArray[np.uint8]") -> int:
+    weights = 1 << np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
+    return int(np.sum(bits.astype(np.int64) * weights))
+
+
+def modulate_coded_ofdm_loaded(
+    data: bytes,
+    allocation: "npt.NDArray[np.intp]",
+    coding: "CodingSpec",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Complex:
+    """Encode + interleave ``data`` and transmit it over bit-loaded OFDM (BICM).
+
+    Pipeline (matching the T&E convention): ``unpackbits -> frame_with_crc ->
+    codec.encode -> interleave(depth 8)``, prefixed with a 32-bit count of the
+    interleaved coded bits, then ``modulate_ofdm_loaded``. The prefix lets the RX
+    strip the subcarrier-boundary zero padding before decoding. The FEC coded
+    bits are adaptively mapped onto the subcarriers by ``allocation`` (compute it
+    from CSI with ``chow_load(subcarrier_snr(data_channel_response(taps), N0))``).
+    Decode with :func:`decode_coded_ofdm_loaded`. See ADR-0020.
+    """
+    from core.coding import (
+        CODING_INTERLEAVE_DEPTH,
+        frame_with_crc,
+        interleave,
+        make_codec,
+    )
+
+    bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+    frame = frame_with_crc(bits)
+    coded = make_codec(coding).encode(frame)
+    il = interleave(coded, CODING_INTERLEAVE_DEPTH)
+    payload = np.concatenate([_int_to_len_header(int(il.size)), il]).astype(np.uint8)
+    return modulate_ofdm_loaded(payload, allocation, profile)
+
+
+def decode_coded_ofdm_loaded(
+    rx: Complex,
+    coding: "CodingSpec",
+    profile: OFDMProfile = DEFAULT_OFDM_PROFILE,
+) -> Tuple[bytes, bool]:
+    """Recover the payload from a coded bit-loaded OFDM burst (inverse of
+    :func:`modulate_coded_ofdm_loaded`).
+
+    Reads the 32-bit coded-length prefix (hard), truncates to exactly the
+    interleaved coded bits (dropping subcarrier-boundary padding), then
+    ``deinterleave -> codec.decode -> check_and_strip_crc``. Soft-input codecs
+    consume per-carrier weighted LLRs from :func:`demodulate_ofdm_loaded_soft`;
+    hard-only codecs use the hard demod. Returns ``(payload_bytes, crc_ok)``;
+    ``(b"", False)`` on sync failure, a bad length, or CRC failure
+    (loud-on-failure, ADR-0006).
+    """
+    from core.coding import (
+        CODING_INTERLEAVE_DEPTH,
+        check_and_strip_crc,
+        deinterleave,
+        make_codec,
+    )
+
+    recv: "npt.NDArray[Any]"
+    if coding.soft_input:
+        recv = demodulate_ofdm_loaded_soft(rx, profile)
+    else:
+        recv = demodulate_ofdm_loaded(rx, profile)
+    hdr = _CODED_LEN_HEADER_BITS
+    if recv.size < hdr:
+        return b"", False
+    # Hard-slice the length prefix: soft LLRs use L<0 => bit 1; the hard demod
+    # already returns 0/1 bits.
+    if recv.dtype.kind == "f":
+        hdr_bits = (recv[:hdr] < 0).astype(np.uint8)
+    else:
+        hdr_bits = recv[:hdr].astype(np.uint8)
+    coded_len = _len_header_to_int(hdr_bits)
+    if coded_len <= 0 or hdr + coded_len > recv.size:
+        return b"", False
+    # deint is uint8 (hard) or float64 (soft) LLRs -- a valid SoftOrHard; the
+    # codec dispatches on dtype. deinterleave is generically typed, so widen.
+    deint: Any = deinterleave(recv[hdr : hdr + coded_len], CODING_INTERLEAVE_DEPTH)
+    frame = make_codec(coding).decode(deint).bits
+    payload_bits, ok = check_and_strip_crc(frame)
+    if not ok:
+        return b"", False
+    return bytes(np.packbits(payload_bits).tobytes()), True
 
 
 def data_channel_response(
