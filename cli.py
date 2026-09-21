@@ -53,14 +53,23 @@ try:
     from core.replay import EnhancedReplayEngine, ReplayConfig, ReplayStrategy
     from capture.manager import CaptureManager
     from utils.logging import configure_logging, get_logger, log_performance
-    from utils.fileio import read_iq_file, write_iq_file, FileFormat, CompressionType, get_file_info
+    from utils.fileio import (
+        read_iq_file,
+        write_iq_file,
+        FileFormat,
+        CompressionType,
+        get_file_info,
+    )
     from utils.crypto import CryptoManager, generate_secure_token
     from utils.compat import check_compatibility, get_migration_guide
+
     ENHANCED_MODULES_AVAILABLE = True
 except ImportError:
     # Fallback imports for compatibility
     ENHANCED_MODULES_AVAILABLE = False
-    print("Warning: Enhanced modules not available, using fallback mode", file=sys.stderr)
+    print(
+        "Warning: Enhanced modules not available, using fallback mode", file=sys.stderr
+    )
 
 import logging
 
@@ -71,157 +80,160 @@ __cli_version__ = "2.0.0"
 
 class CLIError(Exception):
     """Exception for CLI-specific errors."""
+
     pass
 
 
 class ProgressReporter:
     """Progress reporting utility for long operations."""
-    
+
     def __init__(self, total: int, description: str = "Processing"):
         self.total = total
         self.description = description
         self.current = 0
         self.start_time = time.time()
         self.last_update = 0
-    
+
     def update(self, increment: int = 1) -> None:
         """Update progress."""
         self.current += increment
-        
+
         # Only update display every 0.1 seconds
         now = time.time()
         if now - self.last_update > 0.1:
             self._display()
             self.last_update = now
-    
+
     def _display(self) -> None:
         """Display progress bar."""
         if self.total <= 0:
             return
-        
+
         percent = (self.current / self.total) * 100
         elapsed = time.time() - self.start_time
-        
+
         # Simple progress bar
         bar_length = 40
         filled_length = int(bar_length * self.current // self.total)
-        bar = '█' * filled_length + '-' * (bar_length - filled_length)
-        
-        print(f'\r{self.description}: |{bar}| {percent:.1f}% ({elapsed:.1f}s)', end='')
-        
+        bar = "█" * filled_length + "-" * (bar_length - filled_length)
+
+        print(f"\r{self.description}: |{bar}| {percent:.1f}% ({elapsed:.1f}s)", end="")
+
         if self.current >= self.total:
             print()  # New line when complete
 
 
 class ConfigManager:
     """Configuration management for CLI."""
-    
+
     def __init__(self):
         self.config_dir = Path.home() / ".dronecmd"
         self.config_file = self.config_dir / "config.json"
         self.config_dir.mkdir(exist_ok=True)
         self._config = self._load_config()
-    
+
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from file."""
         if self.config_file.exists():
             try:
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file, "r") as f:
                     return json.load(f)
             except Exception as e:
                 print(f"Warning: Could not load config: {e}", file=sys.stderr)
-        
+
         # Default configuration
         return {
-            'capture': {
-                'default_sample_rate': 2.048e6,
-                'default_duration': 10.0,
-                'default_gain_mode': 'auto'
+            "capture": {
+                "default_sample_rate": 2.048e6,
+                "default_duration": 10.0,
+                "default_gain_mode": "auto",
             },
-            'processing': {
-                'default_format': 'complex64',
-                'enable_quality_monitoring': True,
-                'enable_performance_logging': True
+            "processing": {
+                "default_format": "complex64",
+                "enable_quality_monitoring": True,
+                "enable_performance_logging": True,
             },
-            'output': {
-                'default_compression': 'none',
-                'include_metadata': True,
-                'json_output': False
+            "output": {
+                "default_compression": "none",
+                "include_metadata": True,
+                "json_output": False,
             },
-            'logging': {
-                'level': 'INFO',
-                'enable_structured': False,
-                'enable_file_logging': True
-            }
+            "logging": {
+                "level": "INFO",
+                "enable_structured": False,
+                "enable_file_logging": True,
+            },
         }
-    
+
     def save_config(self) -> None:
         """Save configuration to file."""
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, "w") as f:
                 json.dump(self._config, f, indent=2)
         except Exception as e:
             print(f"Warning: Could not save config: {e}", file=sys.stderr)
-    
+
     def get(self, key_path: str, default: Any = None) -> Any:
         """Get configuration value using dot notation."""
-        keys = key_path.split('.')
+        keys = key_path.split(".")
         value = self._config
-        
+
         for key in keys:
             if isinstance(value, dict) and key in value:
                 value = value[key]
             else:
                 return default
-        
+
         return value
-    
+
     def set(self, key_path: str, value: Any) -> None:
         """Set configuration value using dot notation."""
-        keys = key_path.split('.')
+        keys = key_path.split(".")
         config = self._config
-        
+
         for key in keys[:-1]:
             if key not in config:
                 config[key] = {}
             config = config[key]
-        
+
         config[keys[-1]] = value
         self.save_config()
 
 
 class CLIOutput:
     """Output formatting utilities."""
-    
+
     def __init__(self, json_output: bool = False, verbose: bool = False):
         self.json_output = json_output
         self.verbose = verbose
         self.results = {}
-    
+
     def info(self, message: str, **kwargs: Any) -> None:
         """Output info message."""
         if self.json_output:
-            self.results.setdefault('info', []).append({'message': message, **kwargs})
+            self.results.setdefault("info", []).append({"message": message, **kwargs})
         else:
             print(f"[INFO] {message}")
             if self.verbose and kwargs:
                 for key, value in kwargs.items():
                     print(f"  {key}: {value}")
-    
+
     def warning(self, message: str, **kwargs: Any) -> None:
         """Output warning message."""
         if self.json_output:
-            self.results.setdefault('warnings', []).append({'message': message, **kwargs})
+            self.results.setdefault("warnings", []).append(
+                {"message": message, **kwargs}
+            )
         else:
             print(f"[WARNING] {message}", file=sys.stderr)
-    
+
     def error(self, message: str, **kwargs: Any) -> None:
         """Output error message."""
         if self.json_output:
-            self.results.setdefault('errors', []).append({'message': message, **kwargs})
+            self.results.setdefault("errors", []).append({"message": message, **kwargs})
         else:
             print(f"[ERROR] {message}", file=sys.stderr)
-    
+
     def result(self, data: Dict[str, Any]) -> None:
         """Output result data."""
         if self.json_output:
@@ -242,7 +254,7 @@ class CLIOutput:
                             print(f"  ... and {len(value) - 5} more")
                 else:
                     print(f"{key}: {value}")
-    
+
     def finalize(self) -> None:
         """Finalize output."""
         if self.json_output:
@@ -252,8 +264,8 @@ class CLIOutput:
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser."""
     parser = argparse.ArgumentParser(
-        prog='dronecmd',
-        description='Enhanced Drone Command Interference Toolkit',
+        prog="dronecmd",
+        description="Enhanced Drone Command Interference Toolkit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -265,225 +277,318 @@ Examples:
   dronecmd info --compatibility
 
 For more information, see the documentation.
-        """
+        """,
     )
-    
+
     # Global options
-    parser.add_argument('--version', action='version', version=f'dronecmd {__version__}')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
-    parser.add_argument('--json', action='store_true', help='Output results as JSON')
-    parser.add_argument('--config', type=str, help='Configuration file path')
-    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
-                       default='INFO', help='Logging level')
-    
+    parser.add_argument(
+        "--version", action="version", version=f"dronecmd {__version__}"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose output"
+    )
+    parser.add_argument("--json", action="store_true", help="Output results as JSON")
+    parser.add_argument("--config", type=str, help="Configuration file path")
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level",
+    )
+
     # Subcommands
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
     # Capture command
-    capture_parser = subparsers.add_parser('capture', help='Capture RF signals')
-    capture_parser.add_argument('--frequency', '-f', type=float, required=True,
-                               help='Center frequency in Hz (e.g., 2.44e9)')
-    capture_parser.add_argument('--duration', '-d', type=float, default=10.0,
-                               help='Capture duration in seconds')
-    capture_parser.add_argument('--sample-rate', '-s', type=float, default=2.048e6,
-                               help='Sample rate in Hz')
-    capture_parser.add_argument('--output', '-o', type=str, required=True,
-                               help='Output file path')
-    capture_parser.add_argument('--gain', type=str, default='auto',
-                               help='Gain setting (auto, manual value in dB)')
-    capture_parser.add_argument('--device', type=int, default=0,
-                               help='SDR device index')
-    capture_parser.add_argument('--platform', choices=['rtl_sdr', 'hackrf', 'airspy'],
-                               default='rtl_sdr', help='SDR platform')
-    capture_parser.add_argument('--compression', choices=['none', 'gzip', 'bzip2'],
-                               default='none', help='Compression type')
-    capture_parser.add_argument('--format', choices=['complex64', 'complex128', 'int16_iq'],
-                               default='complex64', help='Output format')
-    
+    capture_parser = subparsers.add_parser("capture", help="Capture RF signals")
+    capture_parser.add_argument(
+        "--frequency",
+        "-f",
+        type=float,
+        required=True,
+        help="Center frequency in Hz (e.g., 2.44e9)",
+    )
+    capture_parser.add_argument(
+        "--duration", "-d", type=float, default=10.0, help="Capture duration in seconds"
+    )
+    capture_parser.add_argument(
+        "--sample-rate", "-s", type=float, default=2.048e6, help="Sample rate in Hz"
+    )
+    capture_parser.add_argument(
+        "--output", "-o", type=str, required=True, help="Output file path"
+    )
+    capture_parser.add_argument(
+        "--gain",
+        type=str,
+        default="auto",
+        help="Gain setting (auto, manual value in dB)",
+    )
+    capture_parser.add_argument(
+        "--device", type=int, default=0, help="SDR device index"
+    )
+    capture_parser.add_argument(
+        "--platform",
+        choices=["rtl_sdr", "hackrf", "airspy"],
+        default="rtl_sdr",
+        help="SDR platform",
+    )
+    capture_parser.add_argument(
+        "--compression",
+        choices=["none", "gzip", "bzip2"],
+        default="none",
+        help="Compression type",
+    )
+    capture_parser.add_argument(
+        "--format",
+        choices=["complex64", "complex128", "int16_iq"],
+        default="complex64",
+        help="Output format",
+    )
+
     # Analyze command
-    analyze_parser = subparsers.add_parser('analyze', help='Analyze captured signals')
-    analyze_parser.add_argument('--input', '-i', type=str, required=True,
-                               help='Input file path')
-    analyze_parser.add_argument('--protocols', type=str,
-                               help='Comma-separated list of protocols to detect')
-    analyze_parser.add_argument('--threshold', type=float, default=0.05,
-                               help='Detection threshold')
-    analyze_parser.add_argument('--max-packets', type=int,
-                               help='Maximum number of packets to analyze')
-    analyze_parser.add_argument('--output-report', type=str,
-                               help='Save analysis report to file')
-    
+    analyze_parser = subparsers.add_parser("analyze", help="Analyze captured signals")
+    analyze_parser.add_argument(
+        "--input", "-i", type=str, required=True, help="Input file path"
+    )
+    analyze_parser.add_argument(
+        "--protocols", type=str, help="Comma-separated list of protocols to detect"
+    )
+    analyze_parser.add_argument(
+        "--threshold", type=float, default=0.05, help="Detection threshold"
+    )
+    analyze_parser.add_argument(
+        "--max-packets", type=int, help="Maximum number of packets to analyze"
+    )
+    analyze_parser.add_argument(
+        "--output-report", type=str, help="Save analysis report to file"
+    )
+
     # Replay command
-    replay_parser = subparsers.add_parser('replay', help='Replay captured signals')
-    replay_parser.add_argument('--input', '-i', type=str, required=True,
-                               help='Input file path')
-    replay_parser.add_argument('--count', '-c', type=int, default=3,
-                               help='Number of replays')
-    replay_parser.add_argument('--strategy', choices=['simple', 'intelligent', 'stress'],
-                               default='simple', help='Replay strategy')
-    replay_parser.add_argument('--delay', type=float, default=0.1,
-                               help='Inter-packet delay in seconds')
-    replay_parser.add_argument('--random-delay', action='store_true',
-                               help='Use random delays')
-    
+    replay_parser = subparsers.add_parser("replay", help="Replay captured signals")
+    replay_parser.add_argument(
+        "--input", "-i", type=str, required=True, help="Input file path"
+    )
+    replay_parser.add_argument(
+        "--count", "-c", type=int, default=3, help="Number of replays"
+    )
+    replay_parser.add_argument(
+        "--strategy",
+        choices=["simple", "intelligent", "stress"],
+        default="simple",
+        help="Replay strategy",
+    )
+    replay_parser.add_argument(
+        "--delay", type=float, default=0.1, help="Inter-packet delay in seconds"
+    )
+    replay_parser.add_argument(
+        "--random-delay", action="store_true", help="Use random delays"
+    )
+
     # Generate command
-    generate_parser = subparsers.add_parser('generate', help='Generate test signals')
-    generate_subparsers = generate_parser.add_subparsers(dest='generate_type')
-    
+    generate_parser = subparsers.add_parser("generate", help="Generate test signals")
+    generate_subparsers = generate_parser.add_subparsers(dest="generate_type")
+
     # FHSS generation
-    fhss_parser = generate_subparsers.add_parser('fhss', help='Generate FHSS frames')
-    fhss_parser.add_argument('--frequency', '-f', type=float, required=True,
-                            help='Center frequency in Hz')
-    fhss_parser.add_argument('--data', type=str, required=True,
-                            help='Data to transmit')
-    fhss_parser.add_argument('--hops', type=int, default=8,
-                            help='Number of hop channels')
-    fhss_parser.add_argument('--spacing', type=float, default=1e6,
-                            help='Channel spacing in Hz')
-    fhss_parser.add_argument('--output', '-o', type=str,
-                            help='Output file for frames')
-    fhss_parser.add_argument('--fcc-compliant', action='store_true',
-                            help='Generate FCC-compliant FHSS')
-    
+    fhss_parser = generate_subparsers.add_parser("fhss", help="Generate FHSS frames")
+    fhss_parser.add_argument(
+        "--frequency", "-f", type=float, required=True, help="Center frequency in Hz"
+    )
+    fhss_parser.add_argument("--data", type=str, required=True, help="Data to transmit")
+    fhss_parser.add_argument(
+        "--hops", type=int, default=8, help="Number of hop channels"
+    )
+    fhss_parser.add_argument(
+        "--spacing", type=float, default=1e6, help="Channel spacing in Hz"
+    )
+    fhss_parser.add_argument("--output", "-o", type=str, help="Output file for frames")
+    fhss_parser.add_argument(
+        "--fcc-compliant", action="store_true", help="Generate FCC-compliant FHSS"
+    )
+
     # Convert command
-    convert_parser = subparsers.add_parser('convert', help='Convert file formats')
-    convert_parser.add_argument('--input', '-i', type=str, required=True,
-                               help='Input file path')
-    convert_parser.add_argument('--output', '-o', type=str, required=True,
-                               help='Output file path')
-    convert_parser.add_argument('--format', choices=['complex64', 'complex128', 'wav', 'hdf5'],
-                               required=True, help='Output format')
-    convert_parser.add_argument('--compression', choices=['none', 'gzip', 'bzip2'],
-                               default='none', help='Compression type')
-    
+    convert_parser = subparsers.add_parser("convert", help="Convert file formats")
+    convert_parser.add_argument(
+        "--input", "-i", type=str, required=True, help="Input file path"
+    )
+    convert_parser.add_argument(
+        "--output", "-o", type=str, required=True, help="Output file path"
+    )
+    convert_parser.add_argument(
+        "--format",
+        choices=["complex64", "complex128", "wav", "hdf5"],
+        required=True,
+        help="Output format",
+    )
+    convert_parser.add_argument(
+        "--compression",
+        choices=["none", "gzip", "bzip2"],
+        default="none",
+        help="Compression type",
+    )
+
     # Config command
-    config_parser = subparsers.add_parser('config', help='Configuration management')
-    config_subparsers = config_parser.add_subparsers(dest='config_action')
-    
-    config_get = config_subparsers.add_parser('get', help='Get configuration value')
-    config_get.add_argument('key', help='Configuration key (dot notation)')
-    
-    config_set = config_subparsers.add_parser('set', help='Set configuration value')
-    config_set.add_argument('key', help='Configuration key (dot notation)')
-    config_set.add_argument('value', help='Configuration value')
-    
-    config_show = config_subparsers.add_parser('show', help='Show all configuration')
-    
+    config_parser = subparsers.add_parser("config", help="Configuration management")
+    config_subparsers = config_parser.add_subparsers(dest="config_action")
+
+    config_get = config_subparsers.add_parser("get", help="Get configuration value")
+    config_get.add_argument("key", help="Configuration key (dot notation)")
+
+    config_set = config_subparsers.add_parser("set", help="Set configuration value")
+    config_set.add_argument("key", help="Configuration key (dot notation)")
+    config_set.add_argument("value", help="Configuration value")
+
+    config_show = config_subparsers.add_parser("show", help="Show all configuration")
+
     # Info command
-    info_parser = subparsers.add_parser('info', help='Show system information')
-    info_parser.add_argument('--compatibility', action='store_true',
-                            help='Show compatibility information')
-    info_parser.add_argument('--migration', action='store_true',
-                            help='Show migration guide')
+    info_parser = subparsers.add_parser("info", help="Show system information")
+    info_parser.add_argument(
+        "--compatibility", action="store_true", help="Show compatibility information"
+    )
+    info_parser.add_argument(
+        "--migration", action="store_true", help="Show migration guide"
+    )
+
+    # Self-test command (hardware-in-the-loop, receive-only)
+    subparsers.add_parser(
+        "selftest",
+        help="Hardware-in-the-loop RX self-test across capture params/pipeline "
+        "(receive-only; needs a connected HackRF)",
+    )
 
     # Train command
     train_parser = subparsers.add_parser(
-        'train',
-        help='Train protocol classifiers from labeled IQ captures',
+        "train",
+        help="Train protocol classifiers from labeled IQ captures",
     )
     train_parser.add_argument(
-        '--data-dir', required=True,
-        help='Directory of labeled IQ captures (see docs/iq_capture_guide.md)',
+        "--data-dir",
+        required=True,
+        help="Directory of labeled IQ captures (see docs/iq_capture_guide.md)",
     )
     train_parser.add_argument(
-        '--output-dir', required=True,
-        help='Directory to write trained model .pkl files',
+        "--output-dir",
+        required=True,
+        help="Directory to write trained model .pkl files",
     )
     train_parser.add_argument(
-        '--cv-folds', type=int, default=5,
-        help='Cross-validation folds (default: 5)',
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Cross-validation folds (default: 5)",
     )
     train_parser.add_argument(
-        '--jobs', type=int, default=-1,
-        help='Parallel sklearn jobs (-1 = all CPUs)',
+        "--jobs",
+        type=int,
+        default=-1,
+        help="Parallel sklearn jobs (-1 = all CPUs)",
     )
     train_parser.add_argument(
-        '--seed', type=int, default=42,
-        help='Random seed for reproducibility',
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility",
     )
 
     # Validate command (T&E spine, SP1)
     validate_parser = subparsers.add_parser(
-        'validate', help='Empirical validation / T&E of detect->classify pipeline'
+        "validate", help="Empirical validation / T&E of detect->classify pipeline"
     )
-    validate_sub = validate_parser.add_subparsers(dest='validate_action')
+    validate_sub = validate_parser.add_subparsers(dest="validate_action")
 
-    v_synth = validate_sub.add_parser('synth', help='Generate a synthetic labeled dataset')
-    v_synth.add_argument('--protocols', required=True, help='Comma list, e.g. mavlink,dji')
+    v_synth = validate_sub.add_parser(
+        "synth", help="Generate a synthetic labeled dataset"
+    )
     v_synth.add_argument(
-        '--snr', required=True,
+        "--protocols", required=True, help="Comma list, e.g. mavlink,dji"
+    )
+    v_synth.add_argument(
+        "--snr",
+        required=True,
         help=(
-            'LOW:HIGH:STEP in dB, e.g. 0:20:2. A negative LOW bound requires '
+            "LOW:HIGH:STEP in dB, e.g. 0:20:2. A negative LOW bound requires "
             "the '=' form (--snr=-20:20:2) -- a space-separated value "
             "starting with '-' is otherwise parsed by argparse as a flag."
         ),
     )
-    v_synth.add_argument('--n', type=int, default=20, help='Captures per (protocol, SNR) cell')
-    v_synth.add_argument('--seed', type=int, default=42)
-    v_synth.add_argument('--out', required=True, help='Output dataset directory')
     v_synth.add_argument(
-        '--differential', action='store_true',
-        help='Use differential encoding (DBPSK/DQPSK) for PSK schemes',
+        "--n", type=int, default=20, help="Captures per (protocol, SNR) cell"
+    )
+    v_synth.add_argument("--seed", type=int, default=42)
+    v_synth.add_argument("--out", required=True, help="Output dataset directory")
+    v_synth.add_argument(
+        "--differential",
+        action="store_true",
+        help="Use differential encoding (DBPSK/DQPSK) for PSK schemes",
     )
     v_synth.add_argument(
-        '--pilot-spacing', type=int, default=0,
-        help='Insert a known pilot every N coherent-PSK payload symbols for '
-             'pilot-aided phase tracking (0 = pilotless, the default)',
+        "--pilot-spacing",
+        type=int,
+        default=0,
+        help="Insert a known pilot every N coherent-PSK payload symbols for "
+        "pilot-aided phase tracking (0 = pilotless, the default)",
     )
     v_synth.add_argument(
-        '--profile', default=None,
-        help='Force one catalog profile for all protocols (overrides the '
-             'per-protocol default), e.g. ble_2m',
+        "--profile",
+        default=None,
+        help="Force one catalog profile for all protocols (overrides the "
+        "per-protocol default), e.g. ble_2m",
     )
 
-    v_ingest = validate_sub.add_parser('ingest', help='Label real captures into a dataset')
-    v_ingest.add_argument('--input', required=True, help='Directory of real .iq/.sigmf captures')
-    v_ingest.add_argument('--out', required=True, help='Output dataset directory')
-    v_ingest.add_argument('--sample-rate', type=float, default=2_048_000.0)
+    v_ingest = validate_sub.add_parser(
+        "ingest", help="Label real captures into a dataset"
+    )
+    v_ingest.add_argument(
+        "--input", required=True, help="Directory of real .iq/.sigmf captures"
+    )
+    v_ingest.add_argument("--out", required=True, help="Output dataset directory")
+    v_ingest.add_argument("--sample-rate", type=float, default=2_048_000.0)
 
-    v_run = validate_sub.add_parser('run', help='Run the harness and write a report')
-    v_run.add_argument('--dataset', required=True, help='Dataset directory')
-    v_run.add_argument('--models', required=True, help='Trained model directory')
-    v_run.add_argument('--report', required=True, help='Output report.json path')
-    v_run.add_argument('--plots', action='store_true')
-    v_run.add_argument('--seed', type=int, default=42)
+    v_run = validate_sub.add_parser("run", help="Run the harness and write a report")
+    v_run.add_argument("--dataset", required=True, help="Dataset directory")
+    v_run.add_argument("--models", required=True, help="Trained model directory")
+    v_run.add_argument("--report", required=True, help="Output report.json path")
+    v_run.add_argument("--plots", action="store_true")
+    v_run.add_argument("--seed", type=int, default=42)
     v_run.add_argument(
-        '--use-truth-bytes', action='store_true',
+        "--use-truth-bytes",
+        action="store_true",
         help=(
-            'Score the classifier on ground-truth payload bytes instead of '
-            'demodulated bytes. FSK/GFSK and OFDM captures demodulate for real; '
-            'QPSK remains demod-limited (its pipeline demod still uses the FSK '
-            'reference), so use this flag to isolate classifier accuracy there.'
+            "Score the classifier on ground-truth payload bytes instead of "
+            "demodulated bytes. FSK/GFSK and OFDM captures demodulate for real; "
+            "QPSK remains demod-limited (its pipeline demod still uses the FSK "
+            "reference), so use this flag to isolate classifier accuracy there."
         ),
     )
 
     return parser
 
 
-async def cmd_capture(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+async def cmd_capture(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle capture command."""
     if not ENHANCED_MODULES_AVAILABLE:
         output.warning("Enhanced modules not available, using fallback capture")
         # Fallback to basic capture
         return
-    
+
     try:
         # Parse gain setting
-        if args.gain == 'auto':
+        if args.gain == "auto":
             gain_mode = GainMode.AUTO
             gain_db = None
         else:
             gain_mode = GainMode.MANUAL
             gain_db = float(args.gain)
-        
+
         # Parse platform
         platform_map = {
-            'rtl_sdr': SDRPlatform.RTL_SDR,
-            'hackrf': SDRPlatform.HACKRF,
-            'airspy': SDRPlatform.AIRSPY
+            "rtl_sdr": SDRPlatform.RTL_SDR,
+            "hackrf": SDRPlatform.HACKRF,
+            "airspy": SDRPlatform.AIRSPY,
         }
         platform = platform_map.get(args.platform, SDRPlatform.RTL_SDR)
-        
+
         # Create SDR configuration
         sdr_config = SDRConfig(
             platform=platform,
@@ -492,62 +597,66 @@ async def cmd_capture(args: argparse.Namespace, config: ConfigManager, output: C
             duration_s=args.duration,
             gain_mode=gain_mode,
             gain_db=gain_db,
-            device_index=args.device
+            device_index=args.device,
         )
-        
-        output.info(f"Starting capture: {args.frequency/1e6:.3f} MHz for {args.duration}s")
-        
+
+        output.info(
+            f"Starting capture: {args.frequency/1e6:.3f} MHz for {args.duration}s"
+        )
+
         # Enhanced capture with quality monitoring
         async with EnhancedLiveCapture(sdr_config) as capture:
             samples, metadata = await capture.capture_samples()
-        
+
         # Parse output format
         format_map = {
-            'complex64': FileFormat.COMPLEX64,
-            'complex128': FileFormat.COMPLEX128,
-            'int16_iq': FileFormat.INT16_IQ
+            "complex64": FileFormat.COMPLEX64,
+            "complex128": FileFormat.COMPLEX128,
+            "int16_iq": FileFormat.INT16_IQ,
         }
         file_format = format_map.get(args.format, FileFormat.COMPLEX64)
-        
+
         # Parse compression
         compression_map = {
-            'none': CompressionType.NONE,
-            'gzip': CompressionType.GZIP,
-            'bzip2': CompressionType.BZIP2
+            "none": CompressionType.NONE,
+            "gzip": CompressionType.GZIP,
+            "bzip2": CompressionType.BZIP2,
         }
         compression = compression_map.get(args.compression, CompressionType.NONE)
-        
+
         # Save with metadata
         capture_metadata = {
-            'frequency_hz': args.frequency,
-            'sample_rate_hz': args.sample_rate,
-            'duration_s': args.duration,
-            'platform': args.platform,
-            'gain_mode': args.gain,
-            'samples_captured': len(samples),
-            'signal_power_dbfs': metadata.signal_level_dbfs,
-            'snr_db': metadata.snr_db
+            "frequency_hz": args.frequency,
+            "sample_rate_hz": args.sample_rate,
+            "duration_s": args.duration,
+            "platform": args.platform,
+            "gain_mode": args.gain,
+            "samples_captured": len(samples),
+            "signal_power_dbfs": metadata.signal_level_dbfs,
+            "snr_db": metadata.snr_db,
         }
-        
+
         write_iq_file(
             args.output,
             samples,
             file_format=file_format,
             compression=compression,
-            metadata=capture_metadata
+            metadata=capture_metadata,
         )
-        
-        output.result({
-            'capture_successful': True,
-            'samples_captured': len(samples),
-            'file_size_bytes': Path(args.output).stat().st_size,
-            'signal_quality': {
-                'power_dbfs': metadata.signal_level_dbfs,
-                'snr_db': metadata.snr_db,
-                'sample_loss_rate': metadata.sample_loss_rate
+
+        output.result(
+            {
+                "capture_successful": True,
+                "samples_captured": len(samples),
+                "file_size_bytes": Path(args.output).stat().st_size,
+                "signal_quality": {
+                    "power_dbfs": metadata.signal_level_dbfs,
+                    "snr_db": metadata.snr_db,
+                    "sample_loss_rate": metadata.sample_loss_rate,
+                },
             }
-        })
-        
+        )
+
     except Exception as e:
         output.error(f"Capture failed: {e}")
         if args.verbose:
@@ -555,91 +664,93 @@ async def cmd_capture(args: argparse.Namespace, config: ConfigManager, output: C
         raise CLIError(f"Capture failed: {e}")
 
 
-async def cmd_analyze(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+async def cmd_analyze(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle analyze command."""
     try:
         output.info(f"Analyzing file: {args.input}")
-        
+
         # Load file
         iq_data = read_iq_file(args.input)
         file_info = get_file_info(args.input)
-        
+
         output.info(f"Loaded {len(iq_data)} samples")
-        
+
         # Signal quality analysis
         quality_metrics = analyze_signal_quality(iq_data, file_info.sample_rate)
-        
+
         # Packet extraction and classification
         if ENHANCED_MODULES_AVAILABLE:
             # Use enhanced capture manager for packet extraction
             manager = CaptureManager()
             packets = manager.extract_packets(iq_data=iq_data, threshold=args.threshold)
-            
+
             if args.max_packets:
-                packets = packets[:args.max_packets]
-            
+                packets = packets[: args.max_packets]
+
             # Protocol classification
             classifier = EnhancedProtocolClassifier()
             classifications = []
-            
+
             progress = ProgressReporter(len(packets), "Classifying packets")
             for i, packet in enumerate(packets):
                 result = classifier.classify(packet.tobytes())
-                
-                if hasattr(result, 'predicted_protocol'):
+
+                if hasattr(result, "predicted_protocol"):
                     classification = {
-                        'packet_id': i,
-                        'protocol': result.predicted_protocol,
-                        'confidence': result.confidence,
-                        'length_bytes': len(packet)
+                        "packet_id": i,
+                        "protocol": result.predicted_protocol,
+                        "confidence": result.confidence,
+                        "length_bytes": len(packet),
                     }
                 else:
                     classification = {
-                        'packet_id': i,
-                        'protocol': str(result),
-                        'confidence': 0.5,
-                        'length_bytes': len(packet)
+                        "packet_id": i,
+                        "protocol": str(result),
+                        "confidence": 0.5,
+                        "length_bytes": len(packet),
                     }
-                
+
                 classifications.append(classification)
                 progress.update()
-            
+
             # Analyze protocol distribution
             protocol_counts = {}
             for classification in classifications:
-                protocol = classification['protocol']
+                protocol = classification["protocol"]
                 protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
-        
+
         else:
             output.warning("Enhanced analysis not available, using basic analysis")
             packets = []
             classifications = []
             protocol_counts = {}
-        
+
         # Generate results
         analysis_results = {
-            'file_info': {
-                'size_bytes': file_info.size_bytes,
-                'samples': len(iq_data),
-                'format': file_info.format.value if file_info.format else 'unknown',
-                'sample_rate': file_info.sample_rate
+            "file_info": {
+                "size_bytes": file_info.size_bytes,
+                "samples": len(iq_data),
+                "format": file_info.format.value if file_info.format else "unknown",
+                "sample_rate": file_info.sample_rate,
             },
-            'signal_quality': quality_metrics,
-            'packet_analysis': {
-                'packets_found': len(packets),
-                'classifications': classifications,
-                'protocol_distribution': protocol_counts
-            }
+            "signal_quality": quality_metrics,
+            "packet_analysis": {
+                "packets_found": len(packets),
+                "classifications": classifications,
+                "protocol_distribution": protocol_counts,
+            },
         }
-        
+
         # Save report if requested
         if args.output_report:
-            with open(args.output_report, 'w') as f:
+            with open(args.output_report, "w") as f:
                 json.dump(analysis_results, f, indent=2, default=str)
             output.info(f"Report saved to {args.output_report}")
-        
+
         output.result(analysis_results)
-        
+
     except Exception as e:
         output.error(f"Analysis failed: {e}")
         if args.verbose:
@@ -647,77 +758,79 @@ async def cmd_analyze(args: argparse.Namespace, config: ConfigManager, output: C
         raise CLIError(f"Analysis failed: {e}")
 
 
-async def cmd_replay(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+async def cmd_replay(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle replay command."""
     if not ENHANCED_MODULES_AVAILABLE:
         output.error("Replay requires enhanced modules")
         return
-    
+
     try:
         output.info(f"Loading file for replay: {args.input}")
-        
+
         # Load packet data
         iq_data = read_iq_file(args.input)
         packet_bytes = iq_data.tobytes()  # Convert to bytes for replay
-        
+
         # Mock transmitter for demonstration
         class MockTransmitter:
             def __init__(self):
                 self.transmitted_count = 0
-            
+
             async def send_async(self, data: bytes) -> None:
                 self.transmitted_count += 1
                 # In real implementation, this would transmit via SDR
                 await asyncio.sleep(0.001)  # Simulate transmission time
-        
+
         transmitter = MockTransmitter()
-        
+
         # Configure replay strategy
         strategy_map = {
-            'simple': ReplayStrategy.SIMPLE,
-            'intelligent': ReplayStrategy.INTELLIGENT,
-            'stress': ReplayStrategy.STRESS_TEST
+            "simple": ReplayStrategy.SIMPLE,
+            "intelligent": ReplayStrategy.INTELLIGENT,
+            "stress": ReplayStrategy.STRESS_TEST,
         }
         strategy = strategy_map.get(args.strategy, ReplayStrategy.SIMPLE)
-        
+
         replay_config = ReplayConfig(
             strategy=strategy,
             enable_performance_monitoring=True,
-            enable_protocol_awareness=True
+            enable_protocol_awareness=True,
         )
-        
+
         # Create replay engine
         replay_engine = EnhancedReplayEngine(replay_config, transmitter)
-        
-        output.info(f"Starting replay: {args.count} repetitions using {args.strategy} strategy")
-        
+
+        output.info(
+            f"Starting replay: {args.count} repetitions using {args.strategy} strategy"
+        )
+
         # Execute replay
         result = await replay_engine.replay_packet(
-            packet_bytes,
-            repeat_count=args.count,
-            random_delay=args.random_delay
+            packet_bytes, repeat_count=args.count, random_delay=args.random_delay
         )
-        
+
         # Report results
         replay_results = {
-            'replay_successful': result.successful_transmissions > 0,
-            'packets_transmitted': result.packets_transmitted,
-            'successful_transmissions': result.successful_transmissions,
-            'failed_transmissions': result.failed_transmissions,
-            'success_rate': result.success_rate,
-            'total_time_s': result.total_transmission_time_s,
-            'average_packet_rate_hz': result.average_packet_rate_hz,
-            'strategy_used': args.strategy
+            "replay_successful": result.successful_transmissions > 0,
+            "packets_transmitted": result.packets_transmitted,
+            "successful_transmissions": result.successful_transmissions,
+            "failed_transmissions": result.failed_transmissions,
+            "success_rate": result.success_rate,
+            "total_time_s": result.total_transmission_time_s,
+            "average_packet_rate_hz": result.average_packet_rate_hz,
+            "strategy_used": args.strategy,
         }
-        
+
         if result.timing_accuracy_us:
-            replay_results['timing_accuracy_us'] = result.timing_accuracy_us
-        
+            replay_results["timing_accuracy_us"] = result.timing_accuracy_us
+
         if result.error_messages:
-            replay_results['errors'] = result.error_messages
-        
+            replay_results["errors"] = result.error_messages
+
         output.result(replay_results)
-        
+
     except Exception as e:
         output.error(f"Replay failed: {e}")
         if args.verbose:
@@ -725,84 +838,92 @@ async def cmd_replay(args: argparse.Namespace, config: ConfigManager, output: CL
         raise CLIError(f"Replay failed: {e}")
 
 
-async def cmd_generate_fhss(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+async def cmd_generate_fhss(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle FHSS generation command."""
     try:
         output.info(f"Generating FHSS frames for: {args.data}")
-        
+
         if args.fcc_compliant and ENHANCED_MODULES_AVAILABLE:
             # Use FCC-compliant FHSS
             fhss_engine = create_fcc_compliant_fhss(
-                FHSSBand.ISM_2_4_GHz,
-                center_freq_hz=args.frequency
+                FHSSBand.ISM_2_4_GHz, center_freq_hz=args.frequency
             )
         elif ENHANCED_MODULES_AVAILABLE:
             # Use enhanced FHSS
             from core.fhss import EnhancedFHSSEngine, FHSSConfig
-            
+
             config = FHSSConfig(
                 center_freq_hz=args.frequency,
                 channel_spacing_hz=args.spacing,
-                hop_count=args.hops
+                hop_count=args.hops,
             )
             fhss_engine = EnhancedFHSSEngine(config)
         else:
             output.error("FHSS generation requires enhanced modules")
             return
-        
+
         # Generate frames
-        data_bytes = args.data.encode('utf-8')
+        data_bytes = args.data.encode("utf-8")
         frames = fhss_engine.prepare_transmit_frames(
-            packet=data_bytes,
-            sample_rate=2_000_000,
-            bitrate=100_000
+            packet=data_bytes, sample_rate=2_000_000, bitrate=100_000
         )
-        
+
         # Analyze frames
         total_samples = sum(len(frame.iq_samples) for frame in frames)
         total_duration = sum(frame.duration_s for frame in frames)
-        
+
         frame_info = []
         for i, frame in enumerate(frames):
-            frame_info.append({
-                'frame_id': i,
-                'frequency_mhz': frame.frequency_hz / 1e6,
-                'samples': len(frame.iq_samples),
-                'duration_ms': frame.duration_s * 1000,
-                'chunk_bytes': len(frame.chunk_data)
-            })
-        
+            frame_info.append(
+                {
+                    "frame_id": i,
+                    "frequency_mhz": frame.frequency_hz / 1e6,
+                    "samples": len(frame.iq_samples),
+                    "duration_ms": frame.duration_s * 1000,
+                    "chunk_bytes": len(frame.chunk_data),
+                }
+            )
+
         # Save frames if requested
         if args.output:
             # Save as JSON with frame information
             frame_data = {
-                'fhss_config': {
-                    'center_frequency_hz': args.frequency,
-                    'channel_spacing_hz': args.spacing,
-                    'hop_count': args.hops,
-                    'fcc_compliant': args.fcc_compliant
+                "fhss_config": {
+                    "center_frequency_hz": args.frequency,
+                    "channel_spacing_hz": args.spacing,
+                    "hop_count": args.hops,
+                    "fcc_compliant": args.fcc_compliant,
                 },
-                'frames': frame_info,
-                'total_frames': len(frames),
-                'total_samples': total_samples,
-                'total_duration_s': total_duration
+                "frames": frame_info,
+                "total_frames": len(frames),
+                "total_samples": total_samples,
+                "total_duration_s": total_duration,
             }
-            
-            with open(args.output, 'w') as f:
+
+            with open(args.output, "w") as f:
                 json.dump(frame_data, f, indent=2)
-            
+
             output.info(f"Frame information saved to {args.output}")
-        
-        output.result({
-            'fhss_generation_successful': True,
-            'frames_generated': len(frames),
-            'total_samples': total_samples,
-            'total_duration_s': total_duration,
-            'frequency_span_mhz': (max(f.frequency_hz for f in frames) - 
-                                 min(f.frequency_hz for f in frames)) / 1e6,
-            'frame_details': frame_info[:5] if len(frame_info) > 5 else frame_info  # Show first 5
-        })
-        
+
+        output.result(
+            {
+                "fhss_generation_successful": True,
+                "frames_generated": len(frames),
+                "total_samples": total_samples,
+                "total_duration_s": total_duration,
+                "frequency_span_mhz": (
+                    max(f.frequency_hz for f in frames)
+                    - min(f.frequency_hz for f in frames)
+                )
+                / 1e6,
+                "frame_details": frame_info[:5]
+                if len(frame_info) > 5
+                else frame_info,  # Show first 5
+            }
+        )
+
     except Exception as e:
         output.error(f"FHSS generation failed: {e}")
         if args.verbose:
@@ -810,71 +931,81 @@ async def cmd_generate_fhss(args: argparse.Namespace, config: ConfigManager, out
         raise CLIError(f"FHSS generation failed: {e}")
 
 
-async def cmd_convert(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+async def cmd_convert(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle convert command."""
     try:
         output.info(f"Converting {args.input} to {args.format}")
-        
+
         # Load input file
         iq_data = read_iq_file(args.input)
         input_info = get_file_info(args.input)
-        
+
         # Parse output format
         format_map = {
-            'complex64': FileFormat.COMPLEX64,
-            'complex128': FileFormat.COMPLEX128,
-            'wav': FileFormat.WAV,
-            'hdf5': FileFormat.HDF5
+            "complex64": FileFormat.COMPLEX64,
+            "complex128": FileFormat.COMPLEX128,
+            "wav": FileFormat.WAV,
+            "hdf5": FileFormat.HDF5,
         }
         output_format = format_map.get(args.format, FileFormat.COMPLEX64)
-        
+
         # Parse compression
         compression_map = {
-            'none': CompressionType.NONE,
-            'gzip': CompressionType.GZIP,
-            'bzip2': CompressionType.BZIP2
+            "none": CompressionType.NONE,
+            "gzip": CompressionType.GZIP,
+            "bzip2": CompressionType.BZIP2,
         }
         compression = compression_map.get(args.compression, CompressionType.NONE)
-        
+
         # Preserve metadata
         metadata = input_info.metadata.copy() if input_info.metadata else {}
-        metadata.update({
-            'conversion_source': args.input,
-            'conversion_format': args.format,
-            'conversion_time': time.time()
-        })
-        
+        metadata.update(
+            {
+                "conversion_source": args.input,
+                "conversion_format": args.format,
+                "conversion_time": time.time(),
+            }
+        )
+
         # Convert and save
         progress = ProgressReporter(1, "Converting file")
-        
+
         write_iq_file(
             args.output,
             iq_data,
             file_format=output_format,
             compression=compression,
-            metadata=metadata
+            metadata=metadata,
         )
-        
+
         progress.update()
-        
+
         # Get output file info
         output_info = get_file_info(args.output)
-        
-        output.result({
-            'conversion_successful': True,
-            'input_file': {
-                'path': args.input,
-                'size_bytes': input_info.size_bytes,
-                'format': input_info.format.value if input_info.format else 'unknown'
-            },
-            'output_file': {
-                'path': args.output,
-                'size_bytes': output_info.size_bytes,
-                'format': output_info.format.value if output_info.format else 'unknown'
-            },
-            'samples_converted': len(iq_data)
-        })
-        
+
+        output.result(
+            {
+                "conversion_successful": True,
+                "input_file": {
+                    "path": args.input,
+                    "size_bytes": input_info.size_bytes,
+                    "format": input_info.format.value
+                    if input_info.format
+                    else "unknown",
+                },
+                "output_file": {
+                    "path": args.output,
+                    "size_bytes": output_info.size_bytes,
+                    "format": output_info.format.value
+                    if output_info.format
+                    else "unknown",
+                },
+                "samples_converted": len(iq_data),
+            }
+        )
+
     except Exception as e:
         output.error(f"Conversion failed: {e}")
         if args.verbose:
@@ -882,64 +1013,72 @@ async def cmd_convert(args: argparse.Namespace, config: ConfigManager, output: C
         raise CLIError(f"Conversion failed: {e}")
 
 
-def cmd_config(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+def cmd_config(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle config command."""
     try:
-        if args.config_action == 'get':
+        if args.config_action == "get":
             value = config.get(args.key)
             if value is not None:
                 output.result({args.key: value})
             else:
                 output.error(f"Configuration key not found: {args.key}")
-        
-        elif args.config_action == 'set':
+
+        elif args.config_action == "set":
             # Try to parse value as JSON, fall back to string
             try:
                 value = json.loads(args.value)
             except json.JSONDecodeError:
                 value = args.value
-            
+
             config.set(args.key, value)
             output.info(f"Set {args.key} = {value}")
-        
-        elif args.config_action == 'show':
+
+        elif args.config_action == "show":
             output.result(config._config)
-        
+
         else:
             output.error("No config action specified")
-    
+
     except Exception as e:
         output.error(f"Config operation failed: {e}")
         raise CLIError(f"Config operation failed: {e}")
 
 
-def cmd_info(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+def cmd_info(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle info command."""
     try:
         info_data = {
-            'dronecmd_version': __version__,
-            'cli_version': __cli_version__,
-            'enhanced_modules_available': ENHANCED_MODULES_AVAILABLE
+            "dronecmd_version": __version__,
+            "cli_version": __cli_version__,
+            "enhanced_modules_available": ENHANCED_MODULES_AVAILABLE,
         }
-        
+
         if args.compatibility and ENHANCED_MODULES_AVAILABLE:
             from utils.compat import check_compatibility
+
             compat_info = check_compatibility()
-            info_data['compatibility'] = compat_info
-        
+            info_data["compatibility"] = compat_info
+
         if args.migration and ENHANCED_MODULES_AVAILABLE:
             from utils.compat import get_migration_guide
+
             migration_guide = get_migration_guide()
-            info_data['migration_guide'] = migration_guide
-        
+            info_data["migration_guide"] = migration_guide
+
         output.result(info_data)
-        
+
     except Exception as e:
         output.error(f"Info command failed: {e}")
         raise CLIError(f"Info command failed: {e}")
 
 
-def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+def cmd_train(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle train command — build classifiers from labeled IQ captures."""
     try:
         from training.train import train
@@ -956,13 +1095,15 @@ def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput
             n_jobs=args.jobs,
             random_state=args.seed,
         )
-        output.result({
-            'models_saved_to': args.output_dir,
-            'n_samples': metadata['n_samples'],
-            'n_features': metadata['n_features'],
-            'classes': metadata['classes'],
-            'cv_scores': metadata['cv_scores'],
-        })
+        output.result(
+            {
+                "models_saved_to": args.output_dir,
+                "n_samples": metadata["n_samples"],
+                "n_features": metadata["n_features"],
+                "classes": metadata["classes"],
+                "cv_scores": metadata["cv_scores"],
+            }
+        )
     except (FileNotFoundError, ValueError) as e:
         output.error(str(e))
         raise CLIError(str(e))
@@ -970,6 +1111,7 @@ def cmd_train(args: argparse.Namespace, config: ConfigManager, output: CLIOutput
         output.error(f"Training failed: {e}")
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         raise CLIError(f"Training failed: {e}")
 
@@ -1006,26 +1148,33 @@ def _default_synth_profile(protocol):
     return known.get(protocol, "sik_gfsk")
 
 
-def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOutput) -> None:
+def cmd_validate(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
     """Handle validate command — synth/ingest datasets or run the T&E harness."""
     import numpy as np
     from validation import (
-        create_synth_dataset, create_pipeline, evaluate, LabeledDataset,
+        create_synth_dataset,
+        create_pipeline,
+        evaluate,
+        LabeledDataset,
     )
     from validation.report import write_report
 
-    action = getattr(args, 'validate_action', None)
+    action = getattr(args, "validate_action", None)
     try:
-        if action == 'synth':
-            lo, hi, step = (float(x) for x in args.snr.split(':'))
+        if action == "synth":
+            lo, hi, step = (float(x) for x in args.snr.split(":"))
             grid = list(np.arange(lo, hi + step / 2, step))
-            protocols = [p.strip() for p in args.protocols.split(',')]
+            protocols = [p.strip() for p in args.protocols.split(",")]
             if args.profile:
                 profile_by_protocol = {p: args.profile for p in protocols}
             else:
                 profile_by_protocol = {p: _default_synth_profile(p) for p in protocols}
             ds = create_synth_dataset(
-                protocols=protocols, snr_grid_db=grid, n_per_cell=args.n,
+                protocols=protocols,
+                snr_grid_db=grid,
+                n_per_cell=args.n,
                 seed=args.seed,
                 differential=args.differential,
                 pilot_spacing=args.pilot_spacing,
@@ -1033,18 +1182,22 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
             )
             ds.write(Path(args.out))
             output.info(f"Wrote {len(ds)} synthetic captures to {args.out}")
-        elif action == 'ingest':
+        elif action == "ingest":
             ds = LabeledDataset.from_dir(Path(args.input), sample_rate=args.sample_rate)
             ds.write(Path(args.out))
             output.info(f"Ingested {len(ds)} captures to {args.out}")
-        elif action == 'run':
-            clf = EnhancedProtocolClassifier(ClassifierConfig(model_path=Path(args.models)))
+        elif action == "run":
+            clf = EnhancedProtocolClassifier(
+                ClassifierConfig(model_path=Path(args.models))
+            )
             ds = LabeledDataset.from_dir(Path(args.dataset))
             pipe = create_pipeline(clf, use_truth_bytes=args.use_truth_bytes)
             result = evaluate(ds, pipe, seed=args.seed)
             write_report(result, Path(args.report), plots=args.plots)
-            output.info(f"Pd={result.detection.pd:.3f} "
-                        f"accuracy={result.classification.accuracy:.3f} -> {args.report}")
+            output.info(
+                f"Pd={result.detection.pd:.3f} "
+                f"accuracy={result.classification.accuracy:.3f} -> {args.report}"
+            )
         else:
             output.error("Usage: dronecmd validate {synth|ingest|run} ...")
     except CLIError:
@@ -1054,68 +1207,91 @@ def cmd_validate(args: argparse.Namespace, config: ConfigManager, output: CLIOut
         raise CLIError(f"Validate command failed: {e}")
 
 
+async def cmd_selftest(
+    args: argparse.Namespace, config: ConfigManager, output: CLIOutput
+) -> None:
+    """Run the hardware-in-the-loop RX self-test (receive-only)."""
+    from core.selftest import print_summary, run_selftest, summarize
+
+    # Run in a worker thread: the self-test's checks spin up their own event
+    # loops (asyncio.run / CaptureManager), which is illegal inside this CLI's
+    # already-running loop. A worker thread has no running loop, so nesting is
+    # fine. Text mode: the self-test prints its live table + footer. JSON mode:
+    # run quietly and emit the structured summary.
+    results = await asyncio.to_thread(run_selftest, not output.json_output)
+    if output.json_output:
+        output.result(summarize(results))
+    else:
+        print_summary(results)
+    s = summarize(results)
+    if s["fail"]:
+        raise CLIError(f"self-test: {s['fail']} of {s['total']} checks FAILED")
+
+
 async def main() -> int:
     """Main CLI entry point."""
     parser = create_parser()
     args = parser.parse_args()
-    
+
     # Handle no command
     if not args.command:
         parser.print_help()
         return 1
-    
+
     # Initialize configuration
     config = ConfigManager()
-    
+
     # Configure logging
     if ENHANCED_MODULES_AVAILABLE:
         configure_logging(
             level=args.log_level,
-            enable_structured=config.get('logging.enable_structured', False),
-            enable_file=config.get('logging.enable_file_logging', True)
+            enable_structured=config.get("logging.enable_structured", False),
+            enable_file=config.get("logging.enable_file_logging", True),
         )
         logger = get_logger(__name__)
     else:
         logging.basicConfig(level=getattr(logging, args.log_level))
         logger = logging.getLogger(__name__)
-    
+
     # Initialize output
     output = CLIOutput(
-        json_output=args.json or config.get('output.json_output', False),
-        verbose=args.verbose
+        json_output=args.json or config.get("output.json_output", False),
+        verbose=args.verbose,
     )
-    
+
     try:
         # Execute command
-        if args.command == 'capture':
+        if args.command == "capture":
             await cmd_capture(args, config, output)
-        elif args.command == 'analyze':
+        elif args.command == "analyze":
             await cmd_analyze(args, config, output)
-        elif args.command == 'replay':
+        elif args.command == "replay":
             await cmd_replay(args, config, output)
-        elif args.command == 'generate':
-            if args.generate_type == 'fhss':
+        elif args.command == "generate":
+            if args.generate_type == "fhss":
                 await cmd_generate_fhss(args, config, output)
             else:
                 output.error("Unknown generate type")
                 return 1
-        elif args.command == 'convert':
+        elif args.command == "convert":
             await cmd_convert(args, config, output)
-        elif args.command == 'config':
+        elif args.command == "config":
             cmd_config(args, config, output)
-        elif args.command == 'info':
+        elif args.command == "info":
             cmd_info(args, config, output)
-        elif args.command == 'train':
+        elif args.command == "selftest":
+            await cmd_selftest(args, config, output)
+        elif args.command == "train":
             cmd_train(args, config, output)
-        elif args.command == 'validate':
+        elif args.command == "validate":
             cmd_validate(args, config, output)
         else:
             output.error(f"Unknown command: {args.command}")
             return 1
-        
+
         output.finalize()
         return 0
-        
+
     except CLIError as e:
         output.error(str(e))
         output.finalize()

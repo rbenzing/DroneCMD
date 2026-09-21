@@ -106,6 +106,10 @@ All HackRF backends are **receive-only** — they never transmit.
 # Capture IQ samples from SDR hardware (2.44 GHz needs HackRF; default is rtl_sdr)
 dronecmd capture --platform hackrf --frequency 2.44e9 --duration 30 --output capture.iq
 
+# Hardware self-test: exercise every capture parameter, API and pipeline stage
+# against a connected HackRF (receive-only; --json for machine-readable output)
+dronecmd selftest
+
 # Analyze a capture file
 dronecmd analyze --input capture.iq --protocols mavlink,dji
 
