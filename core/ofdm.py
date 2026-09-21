@@ -654,21 +654,30 @@ def demodulate_ofdm_loaded_soft(
     return result
 
 
-# Width of the uncoded length prefix that tells the RX how many interleaved
-# coded bits to keep before deinterleaving. modulate_ofdm_loaded zero-pads the
-# payload to a subcarrier boundary, so without this the RX cannot tell where the
-# coded stream ends and the padding begins (which corrupts decode + CRC).
+# Uncoded length prefix telling the RX how many interleaved coded bits to keep
+# before deinterleaving. modulate_ofdm_loaded zero-pads the payload to a
+# subcarrier boundary, so without this the RX cannot tell where the coded stream
+# ends and padding begins (which corrupts decode + CRC). The prefix rides the
+# (possibly weak / high-order) bit-loaded carriers uncoded, so it is repeated
+# _CODED_LEN_HEADER_REPS times and majority-voted at RX for robustness.
 _CODED_LEN_HEADER_BITS = 32
+_CODED_LEN_HEADER_REPS = 3
 
 
 def _int_to_len_header(value: int) -> "npt.NDArray[np.uint8]":
     shifts = np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
-    return ((value >> shifts) & 1).astype(np.uint8)
+    one = ((int(value) >> shifts) & 1).astype(np.uint8)
+    return np.tile(one, _CODED_LEN_HEADER_REPS).astype(np.uint8)
 
 
 def _len_header_to_int(bits: "npt.NDArray[np.uint8]") -> int:
+    reps = bits.reshape(_CODED_LEN_HEADER_REPS, _CODED_LEN_HEADER_BITS)
+    voted = (reps.sum(axis=0) * 2 > _CODED_LEN_HEADER_REPS).astype(np.int64)
     weights = 1 << np.arange(_CODED_LEN_HEADER_BITS - 1, -1, -1)
-    return int(np.sum(bits.astype(np.int64) * weights))
+    return int(np.sum(voted * weights))
+
+
+_CODED_LEN_HEADER_TOTAL = _CODED_LEN_HEADER_BITS * _CODED_LEN_HEADER_REPS
 
 
 def modulate_coded_ofdm_loaded(
@@ -730,11 +739,11 @@ def decode_coded_ofdm_loaded(
         recv = demodulate_ofdm_loaded_soft(rx, profile)
     else:
         recv = demodulate_ofdm_loaded(rx, profile)
-    hdr = _CODED_LEN_HEADER_BITS
+    hdr = _CODED_LEN_HEADER_TOTAL
     if recv.size < hdr:
         return b"", False
-    # Hard-slice the length prefix: soft LLRs use L<0 => bit 1; the hard demod
-    # already returns 0/1 bits.
+    # Hard-slice the repeated length prefix: soft LLRs use L<0 => bit 1; the
+    # hard demod already returns 0/1 bits. _len_header_to_int majority-votes.
     if recv.dtype.kind == "f":
         hdr_bits = (recv[:hdr] < 0).astype(np.uint8)
     else:
