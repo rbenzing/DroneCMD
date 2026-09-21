@@ -28,6 +28,7 @@ from core.bitloading import qam_demap, qam_map
 Complex = npt.NDArray[np.complex128]
 Bits = npt.NDArray[np.uint8]
 LLRs = npt.NDArray[np.float64]
+Real = npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True)
@@ -272,26 +273,26 @@ def ofdm_sync_confidence(
     return float(np.max(metric[:search_span]))
 
 
-def ofdm_equalized_symbols(
-    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
-) -> Complex:
-    """Equalized data subcarriers for every data symbol, concatenated.
+def _ofdm_equalize_csi(
+    rx: Complex, profile: OFDMProfile
+) -> Tuple[Complex, Real, float]:
+    """Shared equalizer core: equalized data symbols + per-carrier CSI.
 
-    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
-    LTF least-squares channel estimation, and per-symbol one-tap equalization
-    with pilot common-phase-error correction as :func:`demodulate_ofdm`, but
-    returns the equalized data-subcarrier symbols (the pre-demap signal, in
-    subcarrier order, all data symbols concatenated) rather than demapped bits.
-    Empty when ``rx`` is shorter than the STF+LTF preamble or yields no data
-    symbol. Used by the blind OFDM resolver (:mod:`core.blind`) to score
-    trial-demodulation quality; :func:`demodulate_ofdm` demaps its output.
+    Returns ``(syms, gain_sq, noise_var)`` where ``syms`` is the concatenated
+    equalized data subcarriers (the value :func:`ofdm_equalized_symbols`
+    returns), ``gain_sq`` is ``|h_k|^2`` per data carrier tiled across the data
+    symbols (same shape/order as ``syms``), and ``noise_var`` is the scalar
+    ``N0`` estimated from pilot residuals. On sync failure returns
+    ``(empty, empty, nan)``.
     """
     n = profile.fft_size
     slen = profile.symbol_len
     half = n // 2
+    empty = np.zeros(0, dtype=np.complex128)
+    empty_r = np.zeros(0, dtype=np.float64)
     x = np.asarray(rx, dtype=np.complex128)
     if len(x) < 2 * slen:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     # 1. Coarse timing = argmax of the S&C metric (max of the S&C metric).
     # The true STF boundary sits within the metric's flat-topped plateau
     # (the metric stays near-peak for a range of `d` around the exact
@@ -307,7 +308,7 @@ def ofdm_equalized_symbols(
     # away from the true (but noisy) preamble peak.
     metric, p = _sc_metric(x, half)
     if metric.size == 0:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     search_span = min(len(metric), slen)
     d_body = int(np.argmax(metric[:search_span]))
     # 2. Fractional CFO from the STF half-symbol phase; derotate the burst.
@@ -318,14 +319,17 @@ def ofdm_equalized_symbols(
     _, ltf_known = _ltf_freq(profile)
     ltf_start = d_body + slen
     if ltf_start + n > len(x):
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     y_ltf = np.fft.fft(x[ltf_start : ltf_start + n], n)
     h = np.ones(n, dtype=np.complex128)
     h[occ_bins] = y_ltf[occ_bins] / ltf_known
     data_bins = _bins(profile, profile.data_carriers)
     pilot_bins = _bins(profile, profile.pilot_carriers)
     pilot_vals = np.asarray(profile.pilot_values, dtype=np.complex128)
+    h_data_sq = (np.abs(h[data_bins]) ** 2).astype(np.float64)  # per data carrier
+    h_pilot_sq = (np.abs(h[pilot_bins]) ** 2).astype(np.float64)
     syms = []
+    n0_terms: list = []
     i = 0
     # 4. Per data symbol: equalize, pilot CPE correction, collect equalized
     #    data subcarriers (demapping happens in demodulate_ofdm).
@@ -343,11 +347,50 @@ def ofdm_equalized_symbols(
         cpe = float(np.angle(np.sum(pilots_eq * np.conj(pilot_vals))))
         data_eq = (y[data_bins] / (h[data_bins] + 1e-12)) * np.exp(-1j * cpe)
         syms.append(data_eq)
+        # N0 from pilot residuals: |h_k|^2 * |y_eq,k - pilot_k|^2 ~ N0 (the
+        # pre-equalization noise power), CPE-corrected to match the data path.
+        pilot_resid = pilots_eq * np.exp(-1j * cpe) - pilot_vals
+        n0_terms.append(h_pilot_sq * (np.abs(pilot_resid) ** 2))
         i += 1
     if not syms:
-        return np.zeros(0, dtype=np.complex128)
+        return empty, empty_r, float("nan")
     out: Complex = np.concatenate(syms).astype(np.complex128)
-    return out
+    gain_sq: Real = np.tile(h_data_sq, len(syms)).astype(np.float64)
+    noise_var = float(np.mean(np.concatenate(n0_terms))) if n0_terms else float("nan")
+    return out, gain_sq, noise_var
+
+
+def ofdm_equalized_symbols(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Complex:
+    """Equalized data subcarriers for every data symbol, concatenated.
+
+    Runs the same Schmidl & Cox coarse timing + fractional-CFO correction,
+    LTF least-squares channel estimation, and per-symbol one-tap equalization
+    with pilot common-phase-error correction as :func:`demodulate_ofdm`, but
+    returns the equalized data-subcarrier symbols (the pre-demap signal, in
+    subcarrier order, all data symbols concatenated) rather than demapped bits.
+    Empty when ``rx`` is shorter than the STF+LTF preamble or yields no data
+    symbol. Used by the blind OFDM resolver (:mod:`core.blind`) to score
+    trial-demodulation quality; :func:`demodulate_ofdm` demaps its output.
+    """
+    syms, _, _ = _ofdm_equalize_csi(rx, profile)
+    return syms
+
+
+def ofdm_equalized_symbols_csi(
+    rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE
+) -> Tuple[Complex, Real, float]:
+    """Equalized data symbols plus per-subcarrier CSI for soft demapping.
+
+    Like :func:`ofdm_equalized_symbols`, but also returns the per-data-carrier
+    squared channel gain ``|h_k|^2`` (tiled across the data symbols, same shape
+    and subcarrier order as the returned symbols) and a scalar noise-variance
+    estimate ``N0`` from pilot residuals. A soft QAM demapper weights each
+    carrier by ``|h_k|^2 / N0`` (see :func:`core.bitloading.qam_soft_demap` and
+    ADR-0020). Returns ``(empty, empty, nan)`` on sync failure (loud-on-failure).
+    """
+    return _ofdm_equalize_csi(rx, profile)
 
 
 def demodulate_ofdm(rx: Complex, profile: OFDMProfile = DEFAULT_OFDM_PROFILE) -> Bits:
